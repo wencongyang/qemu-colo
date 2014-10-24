@@ -42,6 +42,7 @@
 #include "qemu/iov.h"
 #include "block/snapshot.h"
 #include "block/qapi.h"
+#include "hw/xen/xen.h"
 
 
 #ifndef ETH_P_RARP
@@ -938,6 +939,14 @@ int qemu_loadvm_state(QEMUFile *f)
                 goto out;
             }
 
+            /* Validate if it is a device's state */
+            if (xen_enabled() && se->is_ram) {
+                fprintf(stderr, "loadvm: %s RAM loading not allowed on Xen\n",
+                        idstr);
+                ret = -EINVAL;
+                goto out;
+            }
+
             /* Add entry */
             le = g_malloc0(sizeof(*le));
 
@@ -1158,6 +1167,33 @@ void qmp_xen_save_devices_state(const char *filename, Error **errp)
     }
 
  the_end:
+    if (saved_vm_running) {
+        vm_start();
+    }
+}
+
+void qmp_xen_load_devices_state(const char *filename, Error **errp)
+{
+    QEMUFile *f;
+    int saved_vm_running;
+    int ret;
+
+    saved_vm_running = runstate_is_running();
+    vm_stop(RUN_STATE_RESTORE_VM);
+
+    f = qemu_fopen(filename, "rb");
+    if (!f) {
+        error_setg_file_open(errp, errno, filename);
+        goto out;
+    }
+
+    ret = qemu_loadvm_state(f);
+    qemu_fclose(f);
+    if (ret < 0) {
+        error_set(errp, QERR_IO_ERROR);
+    }
+
+out:
     if (saved_vm_running) {
         vm_start();
     }

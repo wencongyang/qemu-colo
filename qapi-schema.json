@@ -3515,3 +3515,21 @@
 # Since: 2.1
 ##
 { 'command': 'rtc-reset-reinjection' }
+
+##
+# @xen-load-devices-state:
+#
+# Load the state of all devices from file. The RAM and the block devices
+# of the VM are not loaded by this command.
+#
+# @filename: the file to load the state of the devices from as binary
+# data. See xen-save-devices-state.txt for a description of the binary
+# format.
+#
+# Returns: Nothing on success
+#          If @filename cannot be opened, OpenFileFailed
+#          If an I/O error occurs while reading the file, IOError
+#
+# Since: 2.0
+##
+{ 'command': 'xen-load-devices-state', 'data': {'filename': 'str'} }
