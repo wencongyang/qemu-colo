@@ -72,6 +72,19 @@ BlockBackend *blk_new(const char *name, Error **errp)
 }
 
 /*
+ * Create a new hidden BlockBackend, with a reference count of one.
+ * Return the new BlockBackend on success, null on failure.
+ */
+BlockBackend *blk_hide_new(void)
+{
+    BlockBackend *blk;
+
+    blk = g_new0(BlockBackend, 1);
+    blk->refcnt = 1;
+    return blk;
+}
+
+/*
  * Create a new BlockBackend with a new BlockDriverState attached.
  * Otherwise just like blk_new(), which see.
  */
@@ -91,6 +104,20 @@ BlockBackend *blk_new_with_bs(const char *name, Error **errp)
     return blk;
 }
 
+/*
+ * Create a new hidden BlockBackend with a new BlockDriverState attached.
+ * Otherwise just like blk_hide_new(), which see.
+ */
+BlockBackend *blk_hide_new_with_bs(void)
+{
+    BlockBackend *blk = blk_hide_new();
+    BlockDriverState *bs = bdrv_new();
+
+    blk->bs = bs;
+    bs->blk = blk;
+    return blk;
+}
+
 static void blk_delete(BlockBackend *blk)
 {
     assert(!blk->refcnt);
@@ -102,7 +129,7 @@ static void blk_delete(BlockBackend *blk)
         blk->bs = NULL;
     }
     /* Avoid double-remove after blk_hide_on_behalf_of_do_drive_del() */
-    if (blk->name[0]) {
+    if (blk->name && blk->name[0]) {
         QTAILQ_REMOVE(&blk_backends, blk, link);
     }
     g_free(blk->name);

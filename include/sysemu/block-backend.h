@@ -61,7 +61,9 @@ typedef struct BlockDevOps {
 } BlockDevOps;
 
 BlockBackend *blk_new(const char *name, Error **errp);
+BlockBackend *blk_hide_new(void);
 BlockBackend *blk_new_with_bs(const char *name, Error **errp);
+BlockBackend *blk_hide_new_with_bs(void);
 void blk_ref(BlockBackend *blk);
 void blk_unref(BlockBackend *blk);
 const char *blk_name(BlockBackend *blk);
