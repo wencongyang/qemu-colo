@@ -286,9 +286,10 @@ static void quorum_aio_cb(void *opaque, int ret)
     BDRVQuorumState *s = acb->common.bs->opaque;
     bool rewrite = false;
 
-    if (acb->is_read && s->read_pattern == QUORUM_READ_PATTERN_FIFO) {
+    if (acb->is_read && s->read_pattern != QUORUM_READ_PATTERN_QUORUM) {
         /* We try to read next child in FIFO order if we fail to read */
-        if (ret < 0 && ++acb->child_iter < s->num_children) {
+        if (s->read_pattern == QUORUM_READ_PATTERN_FIFO &&
+            ret < 0 && ++acb->child_iter < s->num_children) {
             read_fifo_child(acb);
             return;
         }

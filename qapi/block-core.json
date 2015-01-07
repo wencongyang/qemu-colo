@@ -1618,9 +1618,11 @@
 #
 # @fifo: read only from the first child that has not failed
 #
+# @first: read only from the first child
+#
 # Since: 2.2
 ##
-{ 'enum': 'QuorumReadPattern', 'data': [ 'quorum', 'fifo' ] }
+{ 'enum': 'QuorumReadPattern', 'data': [ 'quorum', 'fifo', 'first' ] }
 
 ##
 # @BlockdevOptionsQuorum
