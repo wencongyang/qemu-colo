@@ -1070,6 +1070,71 @@ static void quorum_refresh_filename(BlockDriverState *bs)
     bs->full_open_options = opts;
 }
 
+static int quorum_stop_replication(BlockDriverState *bs);
+static int quorum_start_replication(BlockDriverState *bs, int mode)
+{
+    BDRVQuorumState *s = bs->opaque;
+    int ret = -1, i;
+
+    /*
+     * TODO: support COLO_SECONDARY_MODE if we allow secondary
+     * QEMU becoming primary QEMU.
+     */
+    if (mode != COLO_PRIMARY_MODE) {
+        return -1;
+    }
+
+    if (s->read_pattern != QUORUM_READ_PATTERN_FIRST) {
+        return -1;
+    }
+
+    /* NBD client should not be the first child */
+    if (bdrv_start_replication(s->bs[0], mode) == 0) {
+        bdrv_stop_replication(s->bs[0]);
+        return -1;
+    }
+
+    for (i = 1; i < s->num_children; i++) {
+        if (bdrv_start_replication(s->bs[i], mode) == 0) {
+            ret++;
+        }
+    }
+
+    if (ret > 0) {
+        quorum_stop_replication(bs);
+    }
+
+    return ret ? -1 : 0;
+}
+
+static int quorum_do_checkpoint(BlockDriverState *bs)
+{
+    BDRVQuorumState *s = bs->opaque;
+    int i;
+
+    for (i = 1; i < s->num_children; i++) {
+        if (bdrv_do_checkpoint(s->bs[i]) == 0) {
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static int quorum_stop_replication(BlockDriverState *bs)
+{
+    BDRVQuorumState *s = bs->opaque;
+    int ret = -1, i;
+
+    for (i = 0; i < s->num_children; i++) {
+        if (bdrv_stop_replication(s->bs[i]) == 0) {
+            ret++;
+        }
+    }
+
+    return ret ? -1 : 0;
+}
+
 static BlockDriver bdrv_quorum = {
     .format_name                        = "quorum",
     .protocol_name                      = "quorum",
@@ -1093,6 +1158,10 @@ static BlockDriver bdrv_quorum = {
 
     .is_filter                          = true,
     .bdrv_recurse_is_first_non_filter   = quorum_recurse_is_first_non_filter,
+
+    .bdrv_start_replication             = quorum_start_replication,
+    .bdrv_do_checkpoint                 = quorum_do_checkpoint,
+    .bdrv_stop_replication              = quorum_stop_replication,
 };
 
 static void bdrv_quorum_init(void)
