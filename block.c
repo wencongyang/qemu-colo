@@ -1218,6 +1218,7 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
 {
     char *backing_filename = g_malloc0(PATH_MAX);
     int ret = 0;
+    BlockBackend *backing_blk;
     BlockDriverState *backing_hd;
     Error *local_err = NULL;
 
@@ -1255,7 +1256,8 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
         goto free_exit;
     }
 
-    backing_hd = bdrv_new();
+    backing_blk = blk_hide_new_with_bs();
+    backing_hd = blk_bs(backing_blk);
 
     if (bs->backing_format[0] != '\0' && !qdict_haskey(options, "driver")) {
         qdict_put(options, "driver", qstring_from_str(bs->backing_format));
@@ -1266,7 +1268,8 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
                     *backing_filename ? backing_filename : NULL, NULL, options,
                     bdrv_backing_flags(bs->open_flags), NULL, &local_err);
     if (ret < 0) {
-        bdrv_unref(backing_hd);
+        blk_unref(backing_blk);
+        backing_blk = NULL;
         backing_hd = NULL;
         bs->open_flags |= BDRV_O_NO_BACKING;
         error_setg(errp, "Could not open backing file: %s",
@@ -1870,9 +1873,9 @@ void bdrv_close(BlockDriverState *bs)
 
     if (bs->drv) {
         if (bs->backing_hd) {
-            BlockDriverState *backing_hd = bs->backing_hd;
+            BlockBackend *backing_blk = bs->backing_hd->blk;
             bdrv_set_backing_hd(bs, NULL);
-            bdrv_unref(backing_hd);
+            blk_unref(backing_blk);
         }
         bs->drv->bdrv_close(bs);
         g_free(bs->opaque);
