@@ -27,13 +27,6 @@
 
 #define SLICE_TIME 100000000ULL /* ns */
 
-typedef struct CowRequest {
-    int64_t start;
-    int64_t end;
-    QLIST_ENTRY(CowRequest) list;
-    CoQueue wait_queue; /* coroutines blocked on this request */
-} CowRequest;
-
 typedef struct BackupBlockJob {
     BlockJob common;
     BlockDriverState *target;
@@ -44,45 +37,8 @@ typedef struct BackupBlockJob {
     CoRwlock flush_rwlock;
     uint64_t sectors_read;
     HBitmap *bitmap;
-    QLIST_HEAD(, CowRequest) inflight_reqs;
+    CowJob cow_job;
 } BackupBlockJob;
-
-/* See if in-flight requests overlap and wait for them to complete */
-static void coroutine_fn wait_for_overlapping_requests(BackupBlockJob *job,
-                                                       int64_t start,
-                                                       int64_t end)
-{
-    CowRequest *req;
-    bool retry;
-
-    do {
-        retry = false;
-        QLIST_FOREACH(req, &job->inflight_reqs, list) {
-            if (end > req->start && start < req->end) {
-                qemu_co_queue_wait(&req->wait_queue);
-                retry = true;
-                break;
-            }
-        }
-    } while (retry);
-}
-
-/* Keep track of an in-flight request */
-static void cow_request_begin(CowRequest *req, BackupBlockJob *job,
-                                     int64_t start, int64_t end)
-{
-    req->start = start;
-    req->end = end;
-    qemu_co_queue_init(&req->wait_queue);
-    QLIST_INSERT_HEAD(&job->inflight_reqs, req, list);
-}
-
-/* Forget about a completed request */
-static void cow_request_end(CowRequest *req)
-{
-    QLIST_REMOVE(req, list);
-    qemu_co_queue_restart_all(&req->wait_queue);
-}
 
 static int coroutine_fn backup_do_cow(BlockDriverState *bs,
                                       int64_t sector_num, int nb_sectors,
@@ -104,8 +60,8 @@ static int coroutine_fn backup_do_cow(BlockDriverState *bs,
 
     trace_backup_do_cow_enter(job, start, sector_num, nb_sectors);
 
-    wait_for_overlapping_requests(job, start, end);
-    cow_request_begin(&cow_request, job, start, end);
+    wait_for_overlapping_requests(&job->cow_job, start, end);
+    cow_request_begin(&cow_request, &job->cow_job, start, end);
 
     for (; start < end; start++) {
         if (hbitmap_get(job->bitmap, start)) {
@@ -255,7 +211,7 @@ static void coroutine_fn backup_run(void *opaque)
     int64_t start, end;
     int ret = 0;
 
-    QLIST_INIT(&job->inflight_reqs);
+    QLIST_INIT(&job->cow_job.inflight_reqs);
     qemu_co_rwlock_init(&job->flush_rwlock);
 
     start = 0;

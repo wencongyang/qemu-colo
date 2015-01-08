@@ -567,4 +567,21 @@ int bdrv_start_replication(BlockDriverState *bs, int mode);
 int bdrv_do_checkpoint(BlockDriverState *bs);
 int bdrv_stop_replication(BlockDriverState *bs);
 
+typedef struct CowRequest {
+    int64_t start;
+    int64_t end;
+    QLIST_ENTRY(CowRequest) list;
+    CoQueue wait_queue; /* coroutines blocked on this request */
+} CowRequest;
+
+typedef struct CowJob {
+    QLIST_HEAD(, CowRequest) inflight_reqs;
+} CowJob;
+
+void coroutine_fn
+wait_for_overlapping_requests(CowJob *job, int64_t start, int64_t end);
+void cow_request_begin(CowRequest *req, CowJob *job,
+                       int64_t start, int64_t end);
+void cow_request_end(CowRequest *req);
+
 #endif
