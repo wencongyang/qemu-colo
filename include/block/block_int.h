@@ -273,6 +273,18 @@ struct BlockDriver {
     void (*bdrv_io_unplug)(BlockDriverState *bs);
     void (*bdrv_flush_io_queue)(BlockDriverState *bs);
 
+
+    /* Checkpoint control, called in migration/checkpoint thread */
+    int (*bdrv_start_replication)(BlockDriverState *bs, int mode);
+    /*
+     * Drop Disk buffer when doing checkpoint.
+     */
+    int (*bdrv_do_checkpoint)(BlockDriverState *bs);
+    /* After failover, we should flush Disk buffer into secondary disk
+     * and stop block replication.
+     */
+    int (*bdrv_stop_replication)(BlockDriverState *bs);
+
     QLIST_ENTRY(BlockDriver) list;
 };
 

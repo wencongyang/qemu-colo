@@ -6156,3 +6156,39 @@ BlockAcctStats *bdrv_get_stats(BlockDriverState *bs)
 {
     return &bs->stats;
 }
+
+int bdrv_start_replication(BlockDriverState *bs, int mode)
+{
+    BlockDriver *drv = bs->drv;
+    if (drv && drv->bdrv_start_replication) {
+        return drv->bdrv_start_replication(bs, mode);
+    } else if (bs->file) {
+        return bdrv_start_replication(bs->file, mode);
+    }
+
+    return -1;
+}
+
+int bdrv_do_checkpoint(BlockDriverState *bs)
+{
+    BlockDriver *drv = bs->drv;
+    if (drv && drv->bdrv_do_checkpoint) {
+        return drv->bdrv_do_checkpoint(bs);
+    } else if (bs->file) {
+        return bdrv_do_checkpoint(bs->file);
+    }
+
+    return -1;
+}
+
+int bdrv_stop_replication(BlockDriverState *bs)
+{
+    BlockDriver *drv = bs->drv;
+    if (drv && drv->bdrv_stop_replication) {
+        return drv->bdrv_stop_replication(bs);
+    } else if (bs->file) {
+        return bdrv_stop_replication(bs->file);
+    }
+
+    return -1;
+}

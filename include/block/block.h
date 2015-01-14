@@ -557,4 +557,14 @@ void bdrv_flush_io_queue(BlockDriverState *bs);
 
 BlockAcctStats *bdrv_get_stats(BlockDriverState *bs);
 
+/* Checkpoint control, called in migration/checkpoint thread */
+enum {
+    COLO_UNPROTECTED_MODE = 0,
+    COLO_PRIMARY_MODE,
+    COLO_SECONDARY_MODE,
+};
+int bdrv_start_replication(BlockDriverState *bs, int mode);
+int bdrv_do_checkpoint(BlockDriverState *bs);
+int bdrv_stop_replication(BlockDriverState *bs);
+
 #endif
