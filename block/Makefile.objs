@@ -21,7 +21,7 @@ block-obj-$(CONFIG_ARCHIPELAGO) += archipelago.o
 block-obj-$(CONFIG_LIBSSH2) += ssh.o
 block-obj-y += accounting.o
 block-obj-y += write-threshold.o
-block-obj-y += blkcolo-buffer.o
+block-obj-y += blkcolo-buffer.o blkcolo.o
 
 common-obj-y += stream.o
 common-obj-y += commit.o
