@@ -445,6 +445,58 @@ static void nbd_refresh_filename(BlockDriverState *bs)
     bs->full_open_options = opts;
 }
 
+static int nbd_start_replication(BlockDriverState *bs, int mode)
+{
+    BDRVNBDState *s = bs->opaque;
+    Error *local_err = NULL;
+    int ret;
+
+    /*
+     * TODO: support COLO_SECONDARY_MODE if we allow secondary
+     * QEMU becoming primary QEMU.
+     */
+    if (mode != COLO_PRIMARY_MODE) {
+        return -1;
+    }
+
+    if (s->connected) {
+        return -1;
+    }
+
+    /* TODO: NBD client should be one child of quorum, how to verify it? */
+    ret = nbd_connect_server(bs, &local_err);
+    if (local_err) {
+        error_free(local_err);
+    }
+
+    return ret;
+}
+
+static int nbd_do_checkpoint(BlockDriverState *bs)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    if (!s->connected) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int nbd_stop_replication(BlockDriverState *bs)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    if (!s->connected) {
+        return -1;
+    }
+
+    nbd_client_session_close(&s->client);
+    s->connected = false;
+
+    return 0;
+}
+
 static BlockDriver bdrv_nbd = {
     .format_name                = "nbd",
     .protocol_name              = "nbd",
@@ -514,6 +566,9 @@ static BlockDriver bdrv_nbd_colo = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_start_replication     = nbd_start_replication,
+    .bdrv_do_checkpoint         = nbd_do_checkpoint,
+    .bdrv_stop_replication      = nbd_stop_replication,
 
     .has_variable_length        = true,
 };
