@@ -734,6 +734,11 @@ static int64_t quorum_getlength(BlockDriverState *bs)
         if (value < 0) {
             return value;
         }
+
+        if (!value) {
+            continue;
+        }
+
         if (value != result) {
             return -EIO;
         }
