@@ -360,6 +360,8 @@ struct BlockDriverState {
     char exact_filename[PATH_MAX];
 
     BlockDriverState *backing_hd;
+    /* used by backing image */
+    BlockDriverState *origin_file;
     BlockDriverState *file;
 
     NotifierList close_notifiers;
