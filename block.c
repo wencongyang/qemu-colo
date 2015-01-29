@@ -856,8 +856,8 @@ static int bdrv_inherited_flags(int flags)
  */
 static int bdrv_backing_flags(int flags)
 {
-    /* backing files always opened read-only */
-    flags &= ~(BDRV_O_RDWR | BDRV_O_COPY_ON_READ);
+    /* backing files are opened read-write for block replication */
+    flags &= ~BDRV_O_COPY_ON_READ;
 
     /* snapshot=on is handled on the top layer */
     flags &= ~(BDRV_O_SNAPSHOT | BDRV_O_TEMPORARY);
