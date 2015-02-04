@@ -258,6 +258,7 @@ xfs=""
 vhost_net="no"
 vhost_scsi="no"
 kvm="no"
+colo="yes"
 rdma=""
 gprof="no"
 debug_tcg="no"
@@ -924,6 +925,10 @@ for opt do
   ;;
   --enable-kvm) kvm="yes"
   ;;
+  --disable-colo) colo="no"
+  ;;
+  --enable-colo) colo="yes"
+  ;;
   --disable-tcg-interpreter) tcg_interpreter="no"
   ;;
   --enable-tcg-interpreter) tcg_interpreter="yes"
@@ -1328,6 +1333,10 @@ Advanced options (experts only):
   --disable-slirp          disable SLIRP userspace network connectivity
   --disable-kvm            disable KVM acceleration support
   --enable-kvm             enable KVM acceleration support
+  --disable-colo           disable COarse-grain LOck-stepping Virtual
+                           Machines for Non-stop Service
+  --enable-colo            enable COarse-grain LOck-stepping Virtual
+                           Machines for Non-stop Service (default)
   --disable-rdma           disable RDMA-based migration support
   --enable-rdma            enable RDMA-based migration support
   --enable-tcg-interpreter enable TCG with bytecode interpreter (TCI)
@@ -4416,6 +4425,7 @@ echo "Linux AIO support $linux_aio"
 echo "ATTR/XATTR support $attr"
 echo "Install blobs     $blobs"
 echo "KVM support       $kvm"
+echo "COLO support      $colo"
 echo "RDMA support      $rdma"
 echo "TCG interpreter   $tcg_interpreter"
 echo "fdt support       $fdt"
@@ -4975,6 +4985,10 @@ if have_backend "ftrace"; then
   fi
 fi
 echo "CONFIG_TRACE_FILE=$trace_file" >> $config_host_mak
+
+if test "$colo" = "yes"; then
+  echo "CONFIG_COLO=y" >> $config_host_mak
+fi
 
 if test "$rdma" = "yes" ; then
   echo "CONFIG_RDMA=y" >> $config_host_mak
