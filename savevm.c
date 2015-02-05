@@ -42,7 +42,7 @@
 #include "qemu/iov.h"
 #include "block/snapshot.h"
 #include "block/qapi.h"
-
+#include "migration/migration-colo.h"
 
 #ifndef ETH_P_RARP
 #define ETH_P_RARP 0x8035
