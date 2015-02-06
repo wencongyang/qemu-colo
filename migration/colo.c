@@ -25,6 +25,13 @@
         }                                                   \
     } while (0)
 
+/*
+* We should not do checkpoint one after another without any time interval,
+* Because this will lead continuous 'stop' status for VM.
+* CHECKPOINT_MIN_PERIOD is the min time limit between two checkpoint action.
+*/
+#define CHECKPOINT_MIN_PERIOD 100  /* unit: ms */
+
 enum {
     COLO_READY = 0x46,
 
@@ -290,6 +297,7 @@ static void *colo_thread(void *opaque)
 {
     MigrationState *s = opaque;
     QEMUFile *colo_control = NULL;
+    int64_t current_time, checkpoint_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
     int ret;
 
     if (colo_proxy_init(COLO_PRIMARY_MODE) != 0) {
@@ -326,15 +334,40 @@ static void *colo_thread(void *opaque)
     DPRINTF("vm resume to run\n");
 
     while (s->state == MIGRATION_STATUS_COLO) {
+        int proxy_checkpoint_req;
+
         if (failover_request_is_set()) {
             error_report("failover request");
             goto out;
+        }
+        /* wait for a colo checkpoint */
+        proxy_checkpoint_req = colo_proxy_compare();
+        if (proxy_checkpoint_req < 0) {
+            goto out;
+        } else if (!proxy_checkpoint_req) {
+            /*
+             * No checkpoint is needed, wait for 1ms and then
+             * check if we need checkpoint again
+             */
+            g_usleep(1000);
+            continue;
+        } else {
+            int64_t interval;
+
+            current_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
+            interval = current_time - checkpoint_time;
+            if (interval < CHECKPOINT_MIN_PERIOD) {
+                /* Limit the min time between two checkpoint */
+                g_usleep((1000*(CHECKPOINT_MIN_PERIOD - interval)));
+            }
+            DPRINTF("Net packets is not consistent!!!\n");
         }
 
         /* start a colo checkpoint */
         if (colo_do_checkpoint_transaction(s, colo_control)) {
             goto out;
         }
+        checkpoint_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
     }
 
 out:

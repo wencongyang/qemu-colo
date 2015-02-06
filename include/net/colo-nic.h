@@ -19,4 +19,6 @@ void colo_proxy_destroy(int side);
 void colo_add_nic_devices(NetClientState *nc);
 void colo_remove_nic_devices(NetClientState *nc);
 
+int colo_proxy_compare(void);
+
 #endif
