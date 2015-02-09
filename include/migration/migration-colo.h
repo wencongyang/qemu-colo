@@ -17,6 +17,7 @@
 #include "migration/migration.h"
 #include "block/coroutine.h"
 #include "qemu/thread.h"
+#include "qemu/main-loop.h"
 
 bool colo_supported(void);
 void colo_info_mig_init(void);
