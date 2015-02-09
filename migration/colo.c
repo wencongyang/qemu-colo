@@ -24,6 +24,7 @@
     } while (0)
 
 static QEMUBH *colo_bh;
+static Coroutine *colo;
 
 bool colo_supported(void)
 {
@@ -80,4 +81,17 @@ void colo_init_checkpointer(MigrationState *s)
 {
     colo_bh = qemu_bh_new(colo_start_checkpointer, s);
     qemu_bh_schedule(colo_bh);
+}
+
+void *colo_process_incoming_checkpoints(void *opaque)
+{
+    colo = qemu_coroutine_self();
+    assert(colo != NULL);
+
+    /* TODO: COLO checkpoint restore loop */
+
+    colo = NULL;
+    loadvm_exit_colo();
+
+    return NULL;
 }
