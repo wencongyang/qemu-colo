@@ -22,7 +22,7 @@ static void colo_failover_bh(void *opaque)
 {
     qemu_bh_delete(failover_bh);
     failover_bh = NULL;
-    /*TODO: Do failover work */
+    colo_do_failover(NULL);
 }
 
 void failover_request_set(void)
@@ -30,6 +30,16 @@ void failover_request_set(void)
     failover_request = true;
     failover_bh = qemu_bh_new(colo_failover_bh, NULL);
     qemu_bh_schedule(failover_bh);
+}
+
+void failover_request_clear(void)
+{
+    failover_request = false;
+}
+
+bool failover_request_is_set(void)
+{
+    return failover_request;
 }
 
 void qmp_colo_lost_heartbeat(Error **errp)

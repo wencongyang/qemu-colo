@@ -32,6 +32,11 @@ void *colo_process_incoming_checkpoints(void *opaque)
     return NULL;
 }
 
+bool loadvm_in_colo_state(void)
+{
+    return false;
+}
+
 void qmp_colo_lost_heartbeat(Error **errp)
 {
     error_setg(errp, "COLO is not supported, please rerun configure"

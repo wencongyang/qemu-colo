@@ -16,5 +16,7 @@
 #include "qemu-common.h"
 
 void failover_request_set(void);
+void failover_request_clear(void);
+bool failover_request_is_set(void);
 
 #endif
