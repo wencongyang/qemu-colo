@@ -458,6 +458,52 @@ static void nbd_refresh_filename(BlockDriverState *bs)
     bs->full_open_options = opts;
 }
 
+static void nbd_start_replication(BlockDriverState *bs, COLOMode mode,
+                                  Error **errp)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    /*
+     * TODO: support COLO_SECONDARY_MODE if we allow secondary
+     * QEMU becoming primary QEMU.
+     */
+    if (mode != COLO_MODE_PRIMARY) {
+        error_set(errp, QERR_INVALID_PARAMETER, "mode");
+        return;
+    }
+
+    if (s->connected) {
+        error_setg(errp, "The connection is established");
+        return;
+    }
+
+    /* TODO: NBD client should be one child of quorum, how to verify it? */
+    nbd_connect_server(bs, errp);
+}
+
+static void nbd_do_checkpoint(BlockDriverState *bs, Error **errp)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    if (!s->connected) {
+        error_setg(errp, "The connection is not established");
+        return;
+    }
+}
+
+static void nbd_stop_replication(BlockDriverState *bs, Error **errp)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    if (!s->connected) {
+        error_setg(errp, "The connection is not established");
+        return;
+    }
+
+    nbd_client_close(bs);
+    s->connected = false;
+}
+
 static BlockDriver bdrv_nbd = {
     .format_name                = "nbd",
     .protocol_name              = "nbd",
@@ -527,6 +573,9 @@ static BlockDriver bdrv_nbd_colo = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_start_replication     = nbd_start_replication,
+    .bdrv_do_checkpoint         = nbd_do_checkpoint,
+    .bdrv_stop_replication      = nbd_stop_replication,
 
     .has_variable_length        = true,
 };
