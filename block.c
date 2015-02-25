@@ -6196,3 +6196,42 @@ BlockAcctStats *bdrv_get_stats(BlockDriverState *bs)
 {
     return &bs->stats;
 }
+
+void bdrv_start_replication(BlockDriverState *bs, COLOMode mode, Error **errp)
+{
+    BlockDriver *drv = bs->drv;
+
+    if (drv && drv->bdrv_start_replication) {
+        drv->bdrv_start_replication(bs, mode, errp);
+    } else if (bs->file) {
+        bdrv_start_replication(bs->file, mode, errp);
+    } else {
+        error_set(errp, QERR_UNSUPPORTED);
+    }
+}
+
+void bdrv_do_checkpoint(BlockDriverState *bs, Error **errp)
+{
+    BlockDriver *drv = bs->drv;
+
+    if (drv && drv->bdrv_do_checkpoint) {
+        drv->bdrv_do_checkpoint(bs, errp);
+    } else if (bs->file) {
+        bdrv_do_checkpoint(bs->file, errp);
+    } else {
+        error_set(errp, QERR_UNSUPPORTED);
+    }
+}
+
+void bdrv_stop_replication(BlockDriverState *bs, Error **errp)
+{
+    BlockDriver *drv = bs->drv;
+
+    if (drv && drv->bdrv_stop_replication) {
+        drv->bdrv_stop_replication(bs, errp);
+    } else if (bs->file) {
+        bdrv_stop_replication(bs->file, errp);
+    } else {
+        error_set(errp, QERR_UNSUPPORTED);
+    }
+}

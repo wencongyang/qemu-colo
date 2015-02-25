@@ -569,4 +569,8 @@ void bdrv_flush_io_queue(BlockDriverState *bs);
 
 BlockAcctStats *bdrv_get_stats(BlockDriverState *bs);
 
+void bdrv_start_replication(BlockDriverState *bs, COLOMode mode, Error **errp);
+void bdrv_do_checkpoint(BlockDriverState *bs, Error **errp);
+void bdrv_stop_replication(BlockDriverState *bs, Error **errp);
+
 #endif

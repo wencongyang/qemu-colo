@@ -290,6 +290,17 @@ struct BlockDriver {
      */
     int (*bdrv_probe_geometry)(BlockDriverState *bs, HDGeometry *geo);
 
+
+    void (*bdrv_start_replication)(BlockDriverState *bs, COLOMode mode,
+                                   Error **errp);
+    /* Drop Disk buffer when doing checkpoint. */
+    void (*bdrv_do_checkpoint)(BlockDriverState *bs, Error **errp);
+    /*
+     * After failover, we should flush Disk buffer into secondary disk
+     * and stop block replication.
+     */
+    void (*bdrv_stop_replication)(BlockDriverState *bs, Error **errp);
+
     QLIST_ENTRY(BlockDriver) list;
 };
 
