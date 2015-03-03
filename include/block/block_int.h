@@ -628,6 +628,7 @@ void backup_start(BlockDriverState *bs, BlockDriverState *target,
                   BlockdevOnError on_target_error,
                   BlockCompletionFunc *cb, void *opaque,
                   Error **errp);
+void backup_do_checkpoint(BlockJob *job, Error **errp);
 
 void blk_dev_change_media_cb(BlockBackend *blk, bool load);
 bool blk_dev_has_removable_media(BlockBackend *blk);

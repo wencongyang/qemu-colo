@@ -435,3 +435,15 @@ void backup_start(BlockDriverState *bs, BlockDriverState *target,
     job->common.co = qemu_coroutine_create(backup_run);
     qemu_coroutine_enter(job->common.co, job);
 }
+
+void backup_do_checkpoint(BlockJob *job, Error **errp)
+{
+    BackupBlockJob *backup_job = container_of(job, BackupBlockJob, common);
+
+    if (job->driver != &backup_job_driver) {
+        error_setg(errp, "It is not backup job");
+        return;
+    }
+
+    hbitmap_reset_all(backup_job->bitmap);
+}

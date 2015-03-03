@@ -353,6 +353,25 @@ void hbitmap_reset(HBitmap *hb, uint64_t start, uint64_t count)
     hb_reset_between(hb, HBITMAP_LEVELS - 1, start, last);
 }
 
+void hbitmap_reset_all(HBitmap *hb)
+{
+#if 0
+    hbitmap_reset(hb, 0, hb->size << hb->granularity);
+#else
+    uint64_t size = hb->size;
+    unsigned int i;
+
+    /* Same as hbitmap_alloc() except memset() */
+    for (i = HBITMAP_LEVELS; i-- > 0; ) {
+        size = MAX((size + BITS_PER_LONG - 1) >> BITS_PER_LEVEL, 1);
+        memset(hb->levels[i], 0, size * sizeof(unsigned long));
+    }
+
+    assert(size == 1);
+    hb->levels[0][0] |= 1UL << (BITS_PER_LONG - 1);
+#endif
+}
+
 bool hbitmap_get(const HBitmap *hb, uint64_t item)
 {
     /* Compute position and bit in the last layer.  */
