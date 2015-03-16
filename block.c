@@ -6368,6 +6368,12 @@ BlockAcctStats *bdrv_get_stats(BlockDriverState *bs)
 void bdrv_start_replication(BlockDriverState *bs, COLOMode mode, Error **errp)
 {
     BlockDriver *drv = bs->drv;
+    Error *local_err = NULL;
+
+    if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_BACKING_REFERENCE, &local_err)) {
+        error_free(local_err);
+        return;
+    }
 
     if (drv && drv->bdrv_start_replication) {
         drv->bdrv_start_replication(bs, mode, errp);
@@ -6381,6 +6387,12 @@ void bdrv_start_replication(BlockDriverState *bs, COLOMode mode, Error **errp)
 void bdrv_do_checkpoint(BlockDriverState *bs, Error **errp)
 {
     BlockDriver *drv = bs->drv;
+    Error *local_err = NULL;
+
+    if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_BACKING_REFERENCE, &local_err)) {
+        error_free(local_err);
+        return;
+    }
 
     if (drv && drv->bdrv_do_checkpoint) {
         drv->bdrv_do_checkpoint(bs, errp);
@@ -6394,6 +6406,12 @@ void bdrv_do_checkpoint(BlockDriverState *bs, Error **errp)
 void bdrv_stop_replication(BlockDriverState *bs, Error **errp)
 {
     BlockDriver *drv = bs->drv;
+    Error *local_err = NULL;
+
+    if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_BACKING_REFERENCE, &local_err)) {
+        error_free(local_err);
+        return;
+    }
 
     if (drv && drv->bdrv_stop_replication) {
         drv->bdrv_stop_replication(bs, errp);
