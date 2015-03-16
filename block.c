@@ -1399,6 +1399,14 @@ static int bdrv_open_backing_reference_file(BlockDriverState *bs,
     }
 
     backing_hd = blk_bs(backing_blk);
+    /* Don't allow a disk use backing reference target */
+    ret = blk_attach_dev(backing_hd->blk, bs);
+    if (ret < 0) {
+        error_setg(errp, "backing_hd %s is used by the other device model",
+                   backing_name);
+        goto free_exit;
+    }
+
     /* Backing reference itself? */
     if (backing_hd == bs || bdrv_find_overlay(backing_hd, bs)) {
         error_setg(errp, "Backing reference itself");
@@ -2077,6 +2085,7 @@ void bdrv_close(BlockDriverState *bs)
                 if (backing_hd->backing_hd->job) {
                     block_job_cancel(backing_hd->backing_hd->job);
                 }
+                blk_detach_dev(backing_hd->backing_hd->blk, bs);
                 bdrv_set_backing_hd(backing_hd, NULL);
                 bdrv_unref(backing_hd->backing_hd);
             }
