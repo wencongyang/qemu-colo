@@ -1351,6 +1351,113 @@ free_exit:
     return ret;
 }
 
+static void backing_reference_completed(void *opaque, int ret)
+{
+    BlockDriverState *hidden_disk = opaque;
+
+    assert(!hidden_disk->backing_reference);
+}
+
+static int bdrv_open_backing_reference_file(BlockDriverState *bs,
+                                            QDict *options, Error **errp)
+{
+    const char *backing_name;
+    QDict *hidden_disk_options = NULL;
+    BlockDriverState *backing_hd, *hidden_disk;
+    BlockBackend *backing_blk;
+    Error *local_err = NULL;
+    int ret = 0;
+
+    backing_name = qdict_get_try_str(options, "drive_id");
+    if (!backing_name) {
+        error_setg(errp, "Backing reference needs option drive_id");
+        ret = -EINVAL;
+        goto free_exit;
+    }
+    qdict_del(options, "drive_id");
+
+    qdict_extract_subqdict(options, &hidden_disk_options, "hidden-disk.");
+    if (!qdict_size(hidden_disk_options)) {
+        error_setg(errp, "Backing reference needs option hidden-disk.*");
+        ret = -EINVAL;
+        goto free_exit;
+    }
+
+    if (qdict_size(options)) {
+        const QDictEntry *entry = qdict_first(options);
+        error_setg(errp, "Backing reference used by '%s' doesn't support "
+                   "the option '%s'", bdrv_get_device_name(bs), entry->key);
+        ret = -EINVAL;
+        goto free_exit;
+    }
+
+    backing_blk = blk_by_name(backing_name);
+    if (!backing_blk) {
+        error_set(errp, QERR_DEVICE_NOT_FOUND, backing_name);
+        ret = -ENOENT;
+        goto free_exit;
+    }
+
+    backing_hd = blk_bs(backing_blk);
+    /* Backing reference itself? */
+    if (backing_hd == bs || bdrv_find_overlay(backing_hd, bs)) {
+        error_setg(errp, "Backing reference itself");
+        ret = -EINVAL;
+        goto free_exit;
+    }
+
+    if (bdrv_op_is_blocked(backing_hd, BLOCK_OP_TYPE_BACKING_REFERENCE,
+                           errp)) {
+        ret = -EBUSY;
+        goto free_exit;
+    }
+
+    /* hidden-disk is bs's backing file */
+    ret = bdrv_open_backing_file(bs, hidden_disk_options, errp);
+    hidden_disk_options = NULL;
+    if (ret < 0) {
+        goto free_exit;
+    }
+
+    hidden_disk = bs->backing_hd;
+    if (!hidden_disk->drv || !hidden_disk->drv->supports_backing) {
+        ret = -EINVAL;
+        error_setg(errp, "Hidden disk's driver doesn't support backing files");
+        goto free_exit;
+    }
+
+    bdrv_set_backing_hd(hidden_disk, backing_hd);
+    bdrv_ref(backing_hd);
+
+    /*
+     * backing hd may be opened or reopened in read-write mode, so we
+     * should backup backing hd to hidden disk
+     */
+    bdrv_op_unblock(hidden_disk, BLOCK_OP_TYPE_BACKUP_TARGET,
+                    bs->backing_blocker);
+    bdrv_op_unblock(backing_hd, BLOCK_OP_TYPE_BACKUP_SOURCE,
+                    hidden_disk->backing_blocker);
+
+    bdrv_ref(hidden_disk);
+    backup_start(backing_hd, hidden_disk, 0, MIRROR_SYNC_MODE_NONE,
+                 BLOCKDEV_ON_ERROR_REPORT, BLOCKDEV_ON_ERROR_REPORT,
+                 backing_reference_completed, hidden_disk, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        bdrv_unref(hidden_disk);
+        /* FIXME, use which errno? */
+        ret = -EIO;
+        goto free_exit;
+    }
+
+    bs->backing_reference = true;
+
+free_exit:
+    QDECREF(hidden_disk_options);
+    QDECREF(options);
+    return ret;
+}
+
 /*
  * Opens a disk image whose options are given as BlockdevRef in another block
  * device's options.
@@ -1604,12 +1711,36 @@ int bdrv_open(BlockDriverState **pbs, const char *filename,
 
     /* If there is a backing file, use it */
     if ((flags & BDRV_O_NO_BACKING) == 0) {
-        QDict *backing_options;
+        QDict *backing_options, *backing_reference_options;
 
+        qdict_extract_subqdict(options, &backing_reference_options,
+                               "backing_reference.");
         qdict_extract_subqdict(options, &backing_options, "backing.");
-        ret = bdrv_open_backing_file(bs, backing_options, &local_err);
-        if (ret < 0) {
+
+        if (qdict_size(backing_reference_options) &&
+            qdict_size(backing_options)) {
+            error_setg(&local_err,
+                       "Option \"backing_reference.*\" and \"backing.*\""
+                       " cannot be used together");
+            ret = -EINVAL;
+            QDECREF(backing_reference_options);
+            QDECREF(backing_options);
             goto close_and_fail;
+        }
+        if (qdict_size(backing_reference_options)) {
+            QDECREF(backing_options);
+            ret = bdrv_open_backing_reference_file(bs,
+                                                   backing_reference_options,
+                                                   &local_err);
+            if (ret) {
+                goto close_and_fail;
+            }
+        } else {
+            QDECREF(backing_reference_options);
+            ret = bdrv_open_backing_file(bs, backing_options, &local_err);
+            if (ret < 0) {
+                goto close_and_fail;
+            }
         }
     }
 
@@ -1941,6 +2072,14 @@ void bdrv_close(BlockDriverState *bs)
     if (bs->drv) {
         if (bs->backing_hd) {
             BlockDriverState *backing_hd = bs->backing_hd;
+            if (bs->backing_reference) {
+                assert(backing_hd->backing_hd);
+                if (backing_hd->backing_hd->job) {
+                    block_job_cancel(backing_hd->backing_hd->job);
+                }
+                bdrv_set_backing_hd(backing_hd, NULL);
+                bdrv_unref(backing_hd->backing_hd);
+            }
             bdrv_set_backing_hd(bs, NULL);
             bdrv_unref(backing_hd);
         }
