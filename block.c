@@ -1247,6 +1247,20 @@ out:
     bdrv_refresh_limits(bs, NULL);
 }
 
+#define ALLOW_WRITE_BACKING_FILE    "allow-write-backing-file"
+static QemuOptsList backing_file_opts = {
+    .name = "backing_file",
+    .head = QTAILQ_HEAD_INITIALIZER(backing_file_opts.head),
+    .desc = {
+        {
+            .name = ALLOW_WRITE_BACKING_FILE,
+            .type = QEMU_OPT_BOOL,
+            .help = "allow write to backing file",
+        },
+        { /* end of list */ }
+    },
+};
+
 /*
  * Opens the backing file for a BlockDriverState if not yet open
  *
@@ -1261,6 +1275,8 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     int ret = 0;
     BlockDriverState *backing_hd;
     Error *local_err = NULL;
+    QemuOpts *opts = NULL;
+    int flags;
 
     if (bs->backing_hd != NULL) {
         QDECREF(options);
@@ -1273,6 +1289,19 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     }
 
     bs->open_flags &= ~BDRV_O_NO_BACKING;
+    flags = bdrv_backing_flags(bs->open_flags);
+
+    opts = qemu_opts_create(&backing_file_opts, NULL, 0, &error_abort);
+    qemu_opts_absorb_qdict(opts, options, &local_err);
+    if (local_err) {
+        ret = -EINVAL;
+        goto free_exit;
+    }
+    if (qemu_opt_get_bool(opts, ALLOW_WRITE_BACKING_FILE, false)) {
+        flags |= BDRV_O_RDWR;
+    }
+    qemu_opts_del(opts);
+
     if (qdict_haskey(options, "file.filename")) {
         backing_filename[0] = '\0';
     } else if (bs->backing_file[0] == '\0' && qdict_size(options) == 0) {
@@ -1305,7 +1334,7 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     assert(bs->backing_hd == NULL);
     ret = bdrv_open(&backing_hd,
                     *backing_filename ? backing_filename : NULL, NULL, options,
-                    bdrv_backing_flags(bs->open_flags), NULL, &local_err);
+                    flags, NULL, &local_err);
     if (ret < 0) {
         bdrv_unref(backing_hd);
         backing_hd = NULL;
