@@ -27,6 +27,7 @@
 
 #include "qemu/aes.h"
 #include "block/coroutine.h"
+#include "block/nbd.h"
 
 //#define DEBUG_ALLOC
 //#define DEBUG_ALLOC2
@@ -283,6 +284,11 @@ typedef struct BDRVQcowState {
     QLIST_HEAD(, Qcow2UnknownHeaderExtension) unknown_header_ext;
     QTAILQ_HEAD (, Qcow2DiscardRegion) discards;
     bool cache_discards;
+
+    /* Used for block replication */
+    int colo_state;
+    const char *export_name;
+    NBDExport *exp;
 } BDRVQcowState;
 
 struct QCowAIOCB;

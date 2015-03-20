@@ -35,6 +35,7 @@
 #include "qapi-event.h"
 #include "trace.h"
 #include "qemu/option_int.h"
+#include "block/blockjob.h"
 
 /*
   Differences with QCOW:
@@ -1496,7 +1497,7 @@ static void qcow2_invalidate_cache(BlockDriverState *bs, Error **errp)
     memset(s, 0, sizeof(BDRVQcowState));
     options = qdict_clone_shallow(bs->options);
 
-    ret = qcow2_open(bs, options, flags, &local_err);
+    ret = bs->drv->bdrv_open(bs, options, flags, &local_err);
     QDECREF(options);
     if (local_err) {
         error_setg(errp, "Could not reopen qcow2 layer: %s",
@@ -2947,9 +2948,453 @@ BlockDriver bdrv_qcow2 = {
     .bdrv_amend_options  = qcow2_amend_options,
 };
 
+/*********************************************************/
+/*
+ * qcow2 colo functions.
+ *
+ * Note:
+ * 1. The image format is qcow2, but it is only used for block replication.
+ * 2. The image is created by qcow2, not qcow+colo.
+ * 3. The image is an empty image.
+ * 4. The image doesn't contain any snapshot.
+ * 5. The image doesn't contain backing_file in image header.
+ * 6. Active disk and hidden disk use this driver.
+ * 7. The size of Active disk, hidden disk, nbd target should be the same.
+ */
+
+enum {
+    COLO_NONE,      /* block replication is not started */
+    COLO_RUNNING,   /* block replication is running */
+    COLO_DONE,      /* block replication is done(failover) */
+};
+
+static int qcow2_colo_probe(const uint8_t *buf, int buf_size,
+                            const char *filename)
+{
+    /* Use qcow2 as default */
+    return 0;
+}
+
+#define COLO_OPT_EXPORT         "export"
+static QemuOptsList qcow2_colo_runtime_opts = {
+    .name = "qcow2+colo",
+    .head = QTAILQ_HEAD_INITIALIZER(qcow2_colo_runtime_opts.head),
+    .desc = {
+        {
+            .name = COLO_OPT_EXPORT,
+            .type = QEMU_OPT_STRING,
+            .help = "The NBD server name",
+        },
+        { /* end of list */ }
+    },
+};
+
+/*
+ * usage: -drive if=xxx,driver=qcow2+colo,export=xxx,\
+ *        backing_reference.drive_id=xxxx,backing_reference.hidden-disk.*
+ */
+static int qcow2_colo_open(BlockDriverState *bs, QDict *options, int flags,
+                           Error **errp)
+{
+    int ret;
+    BDRVQcowState *s = bs->opaque;;
+    Error *local_err = NULL;
+    QemuOpts *opts = NULL;
+
+    ret = qcow2_open(bs, options, flags, errp);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = -ENOTSUP;
+    if (s->nb_snapshots) {
+        error_setg(errp, "qcow2+colo doesn't support snapshot");
+        goto fail;
+    }
+
+    if (!bs->backing_hd && bs->backing_file[0] != '\0') {
+        error_setg(errp,
+                   "qcow2+colo doesn't support backing_file in image header");
+        goto fail;
+    }
+
+    opts = qemu_opts_create(&qcow2_colo_runtime_opts, NULL, 0, &error_abort);
+    qemu_opts_absorb_qdict(opts, options, &local_err);
+    if (local_err) {
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    s->export_name = g_strdup(qemu_opt_get(opts, COLO_OPT_EXPORT));
+    if (!s->export_name) {
+        error_setg(&local_err, "Missing the option export");
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    return 0;
+
+fail:
+    qcow2_close(bs);
+    qemu_opts_del(opts);
+    /* propagate error */
+    if (local_err) {
+        error_propagate(errp, local_err);
+    }
+    return ret;
+}
+
+static coroutine_fn int qcow2_colo_co_readv(BlockDriverState *bs,
+                                            int64_t sector_num,
+                                            int remaining_sectors,
+                                            QEMUIOVector *qiov)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_co_readv(bs, sector_num, remaining_sectors, qiov);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_co_readv(nbd_target, sector_num, remaining_sectors, qiov);
+    default:
+        abort();
+    }
+}
+
+static coroutine_fn int qcow2_colo_co_writev(BlockDriverState *bs,
+                                             int64_t sector_num,
+                                             int remaining_sectors,
+                                             QEMUIOVector *qiov)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_co_writev(bs, sector_num, remaining_sectors, qiov);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_co_writev(nbd_target, sector_num, remaining_sectors, qiov);
+    default:
+        abort();
+    }
+}
+
+static coroutine_fn int qcow2_colo_co_write_zeroes(BlockDriverState *bs,
+                                                   int64_t sector_num,
+                                                   int nb_sectors,
+                                                   BdrvRequestFlags flags)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_co_write_zeroes(bs, sector_num, nb_sectors, flags);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_co_write_zeroes(nbd_target, sector_num, nb_sectors, flags);
+    default:
+        abort();
+    }
+}
+
+static coroutine_fn int qcow2_colo_co_flush_to_os(BlockDriverState *bs)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_co_flush_to_os(bs);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_co_flush(nbd_target);
+    default:
+        abort();
+    }
+}
+
+static coroutine_fn int qcow2_colo_co_discard(BlockDriverState *bs,
+                                              int64_t sector_num,
+                                              int nb_sectors)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_co_discard(bs, sector_num, nb_sectors);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_co_discard(nbd_target, sector_num, nb_sectors);
+    default:
+        abort();
+    }
+}
+
+static int qcow2_colo_write_compressed(BlockDriverState *bs, int64_t sector_num,
+                                       const uint8_t *buf, int nb_sectors)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+
+    switch (s->colo_state) {
+    case COLO_NONE:
+        return -EIO;
+    case COLO_RUNNING:
+        return qcow2_write_compressed(bs, sector_num, buf, nb_sectors);
+    case COLO_DONE:
+        nbd_target = bs->backing_hd->backing_hd;
+        return bdrv_write_compressed(nbd_target, sector_num, buf, nb_sectors);
+    default:
+        abort();
+    }
+}
+
+static void qcow2_colo_start_replication(BlockDriverState *bs, COLOMode mode,
+                                         Error **errp)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target, *hidden_disk;
+    Error *local_err = NULL;
+    int64_t active_length, hidden_length, nbd_length;
+
+    /*
+     * TODO: support COLO_MODE_PRIMARY if we allow secondary
+     * QEMU becoming primary QEMU.
+     */
+    if (mode != COLO_MODE_SECONDARY) {
+        error_set(errp, QERR_INVALID_PARAMETER, "mode");
+        return;
+    }
+
+    if (!bs->backing_reference) {
+        error_set(errp, QERR_UNSUPPORTED);
+        return;
+    }
+
+    if (s->colo_state == COLO_RUNNING) {
+        error_setg(errp, "Block replication is running");
+        return;
+    } else if (s->colo_state == COLO_DONE) {
+        error_setg(errp, "Cannot restart block replication");
+        return;
+    }
+
+    nbd_target = bs->backing_hd->backing_hd;
+    if (!nbd_target->job ||
+        nbd_target->job->driver->job_type != BLOCK_JOB_TYPE_BACKUP) {
+        error_setg(errp, "Backup job is cancelled unexpectedly");
+        return;
+    }
+
+    hidden_disk = bs->backing_hd;
+    nbd_target = hidden_disk->backing_hd;
+
+    /* verify the length */
+    active_length = bdrv_getlength(bs);
+    hidden_length = bdrv_getlength(hidden_disk);
+    nbd_length = bdrv_getlength(nbd_target);
+    if (active_length < 0 || hidden_length < 0 || nbd_length < 0 ||
+        active_length != hidden_length || hidden_length != nbd_length) {
+        error_setg(errp, "active disk, hidden disk, nbd target's length are "
+                   "not the same");
+        return;
+    }
+
+    if (!hidden_disk->drv->bdrv_make_empty) {
+        error_set(errp, QERR_UNSUPPORTED);
+        return;
+    }
+
+    /* start NBD server */
+    s->exp = nbd_export_new(nbd_target->blk, 0, -1, 0, NULL, &local_err);
+    if (!s->exp) {
+        error_propagate(errp, local_err);
+        return;
+    }
+    nbd_export_set_name(s->exp, s->export_name);
+
+    s->colo_state = COLO_RUNNING;
+}
+
+static void qcow2_colo_do_checkpoint(BlockDriverState *bs, Error **errp)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *hidden_disk, *nbd_target;
+    int ret;
+
+    if (s->colo_state != COLO_RUNNING) {
+        error_setg(errp, "Block replication is not running");
+        return;
+    }
+
+    hidden_disk = bs->backing_hd;
+    nbd_target = hidden_disk->backing_hd;
+    if (!nbd_target->job) {
+        error_setg(errp, "Backup job is cancelled unexpectedly");
+        return;
+    }
+
+    backup_do_checkpoint(nbd_target->job, errp);
+
+    ret = qcow2_make_empty(bs);
+    if (ret < 0) {
+        error_setg(errp, "Cannot make active disk empty");
+        return;
+    }
+
+    ret = hidden_disk->drv->bdrv_make_empty(hidden_disk);
+    if (ret < 0) {
+        error_setg(errp, "Cannot make hidden disk empty");
+        return;
+    }
+}
+
+/*
+ * TODO: Use blockjob?
+ */
+static void commit_data(BlockDriverState *from, BlockDriverState *to,
+                        int commit_buffer_sectors, Error **errp)
+{
+    int64_t len, target_length;
+    int64_t sector_num, end;
+    void *buf = NULL;
+    int n = 0, ret;
+
+    len = bdrv_getlength(from);
+    target_length = bdrv_getlength(to);
+    if (len < 0 || target_length < 0) {
+        /* should not happen */
+        error_set(errp, QERR_UNDEFINED_ERROR);
+        return;
+    }
+
+    assert(len == target_length);
+    end = len >> BDRV_SECTOR_BITS;
+    buf = qemu_blockalign(from, commit_buffer_sectors << BDRV_SECTOR_BITS);
+
+    for (sector_num = 0; sector_num < end; sector_num += n) {
+        ret = bdrv_is_allocated(from, sector_num, commit_buffer_sectors, &n);
+        if (ret < 0) {
+            error_set(errp, QERR_UNDEFINED_ERROR);
+            return;
+        }
+
+        if (ret == 0) {
+            continue;
+        }
+
+        ret = bdrv_read(from, sector_num, buf, n);
+        if (ret) {
+            error_set(errp, QERR_IO_ERROR);
+            return;
+        }
+
+        ret = bdrv_write(to, sector_num, buf, n);
+        if (ret) {
+            error_set(errp, QERR_IO_ERROR);
+            return;
+        }
+    }
+}
+
+static void qcow2_colo_stop_replication(BlockDriverState *bs, Error **errp)
+{
+    BDRVQcowState *s = bs->opaque;
+    BlockDriverState *nbd_target;
+    Error *local_err = NULL;
+
+    if (s->colo_state != COLO_RUNNING) {
+        error_setg(errp, "Block replication is not running");
+        return;
+    }
+
+    /* stop NBD server */
+    nbd_export_close(s->exp);
+    nbd_export_put(s->exp);
+
+    nbd_target = bs->backing_hd->backing_hd;
+
+    if (!nbd_target->job ||
+        nbd_target->job->driver->job_type != BLOCK_JOB_TYPE_BACKUP) {
+        error_setg(errp, "Backup job is cancelled unexpectedly");
+        return;
+    }
+
+    block_job_cancel(nbd_target->job);
+
+    /* commit data from active disk to hidden disk*/
+    commit_data(bs, bs->backing_hd, s->cluster_sectors, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    /* commit data from hidden disk to nbd target */
+    commit_data(bs->backing_hd, nbd_target, s->cluster_sectors, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+}
+
+BlockDriver bdrv_qcow2_colo = {
+    .format_name        = "qcow2+colo",
+    .instance_size      = sizeof(BDRVQcowState),
+    .bdrv_probe         = qcow2_colo_probe,
+    .bdrv_open          = qcow2_colo_open,
+    .bdrv_close         = qcow2_close,
+    .bdrv_reopen_prepare  = qcow2_reopen_prepare,
+    .bdrv_has_zero_init = bdrv_has_zero_init_1,
+    .bdrv_co_get_block_status = qcow2_co_get_block_status,
+    .bdrv_set_key       = qcow2_set_key,
+
+    .bdrv_co_readv          = qcow2_colo_co_readv,
+    .bdrv_co_writev         = qcow2_colo_co_writev,
+    .bdrv_co_flush_to_os    = qcow2_colo_co_flush_to_os,
+
+    .bdrv_co_write_zeroes   = qcow2_colo_co_write_zeroes,
+    .bdrv_co_discard        = qcow2_colo_co_discard,
+    .bdrv_write_compressed  = qcow2_colo_write_compressed,
+    .bdrv_make_empty        = qcow2_make_empty,
+
+    .bdrv_get_info          = qcow2_get_info,
+    .bdrv_get_specific_info = qcow2_get_specific_info,
+
+    .bdrv_save_vmstate    = qcow2_save_vmstate,
+    .bdrv_load_vmstate    = qcow2_load_vmstate,
+
+    .supports_backing           = true,
+
+    .bdrv_refresh_limits        = qcow2_refresh_limits,
+    .bdrv_invalidate_cache      = qcow2_invalidate_cache,
+
+    .bdrv_check          = qcow2_check,
+    .bdrv_amend_options  = qcow2_amend_options,
+
+    .bdrv_start_replication     = qcow2_colo_start_replication,
+    .bdrv_do_checkpoint         = qcow2_colo_do_checkpoint,
+    .bdrv_stop_replication      = qcow2_colo_stop_replication,
+};
+
 static void bdrv_qcow2_init(void)
 {
     bdrv_register(&bdrv_qcow2);
+    bdrv_register(&bdrv_qcow2_colo);
 }
 
 block_init(bdrv_qcow2_init);
