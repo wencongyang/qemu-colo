@@ -44,6 +44,7 @@ void loadvm_exit_colo(void);
 void *colo_process_incoming_checkpoints(void *opaque);
 bool loadvm_in_colo_state(void);
 
+bool vm_in_colo_state(void);
 int get_colo_mode(void);
 
 /* ram cache */
