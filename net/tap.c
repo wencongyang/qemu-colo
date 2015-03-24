@@ -41,6 +41,7 @@
 #include "qemu/error-report.h"
 
 #include "net/tap.h"
+#include "net/colo-nic.h"
 
 #include "net/vhost_net.h"
 
@@ -295,6 +296,8 @@ static void tap_cleanup(NetClientState *nc)
     }
 
     qemu_purge_queued_packets(nc);
+
+    colo_remove_nic_devices(nc);
 
     if (s->down_script[0])
         launch_script(s->down_script, s->down_script_arg, s->fd);
@@ -603,7 +606,7 @@ static int net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
                             const char *model, const char *name,
                             const char *ifname, const char *script,
                             const char *downscript, const char *vhostfdname,
-                            int vnet_hdr, int fd)
+                            int vnet_hdr, int fd, bool setup_colo)
 {
     Error *err = NULL;
     TAPState *s;
@@ -645,6 +648,10 @@ static int net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
     if (tap->has_colo_nicname) {
         snprintf(nc->colo_nicname, sizeof(nc->colo_nicname), "%s",
                  tap->colo_nicname);
+    }
+
+    if (setup_colo) {
+        colo_add_nic_devices(nc);
     }
 
     if (tap->has_vhost ? tap->vhost :
@@ -756,7 +763,7 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
 
         if (net_init_tap_one(tap, peer, "tap", name, NULL,
                              script, downscript,
-                             vhostfdname, vnet_hdr, fd)) {
+                             vhostfdname, vnet_hdr, fd, true)) {
             return -1;
         }
     } else if (tap->has_fds) {
@@ -803,7 +810,7 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
             if (net_init_tap_one(tap, peer, "tap", name, ifname,
                                  script, downscript,
                                  tap->has_vhostfds ? vhost_fds[i] : NULL,
-                                 vnet_hdr, fd)) {
+                                 vnet_hdr, fd, false)) {
                 return -1;
             }
         }
@@ -827,7 +834,7 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
 
         if (net_init_tap_one(tap, peer, "bridge", name, ifname,
                              script, downscript, vhostfdname,
-                             vnet_hdr, fd)) {
+                             vnet_hdr, fd, false)) {
             close(fd);
             return -1;
         }
@@ -870,7 +877,8 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
             if (net_init_tap_one(tap, peer, "tap", name, ifname,
                                  i >= 1 ? "no" : script,
                                  i >= 1 ? "no" : downscript,
-                                 vhostfdname, vnet_hdr, fd)) {
+                                 vhostfdname, vnet_hdr, fd,
+                                 i == 0)) {
                 close(fd);
                 return -1;
             }
