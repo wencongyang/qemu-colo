@@ -379,6 +379,25 @@ void colo_proxy_destroy(int side)
     cp_info.index = -1;
     colo_nic_side = -1;
 }
+
+int colo_proxy_failover(void)
+{
+    if (colo_proxy_send(NULL, 0, COLO_FAILOVER) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int colo_proxy_checkpoint(void)
+{
+    if (colo_proxy_send(NULL, 0, COLO_CHECKPOINT) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 /*
 do checkpoint: return 1
 error: return -1

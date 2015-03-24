@@ -122,6 +122,11 @@ static void slave_do_failover(void)
         ;
     }
 
+    if (colo_proxy_failover() != 0) {
+        error_report("colo proxy failed to do failover");
+    }
+    colo_proxy_destroy(COLO_SECONDARY_MODE);
+
     colo = NULL;
 
     if (!autostart) {
@@ -143,6 +148,8 @@ static void master_do_failover(void)
     if (!colo_runstate_is_stopped()) {
         vm_stop_force_state(RUN_STATE_COLO);
     }
+
+    colo_proxy_destroy(COLO_PRIMARY_MODE);
 
     if (s->state != MIGRATION_STATUS_FAILED) {
         migrate_set_state(s, MIGRATION_STATUS_COLO, MIGRATION_STATUS_COMPLETED);
@@ -266,6 +273,11 @@ static int colo_do_checkpoint_transaction(MigrationState *s, QEMUFile *control)
     qemu_mutex_unlock_iothread();
 
     qemu_fflush(trans);
+
+    ret = colo_proxy_checkpoint();
+    if (ret < 0) {
+        goto out;
+    }
 
     ret = colo_ctl_put(s->file, COLO_CHECKPOINT_SEND);
     if (ret < 0) {
@@ -413,8 +425,6 @@ out:
     qemu_bh_schedule(s->cleanup_bh);
     qemu_mutex_unlock_iothread();
 
-    colo_proxy_destroy(COLO_PRIMARY_MODE);
-
     return NULL;
 }
 
@@ -542,6 +552,12 @@ void *colo_process_incoming_checkpoints(void *opaque)
             goto out;
         }
 
+        ret = colo_proxy_checkpoint();
+        if (ret < 0) {
+                goto out;
+        }
+        DPRINTF("proxy begin to do checkpoint\n");
+
         ret = colo_ctl_get(f, COLO_CHECKPOINT_SEND);
         if (ret < 0) {
             goto out;
@@ -618,6 +634,7 @@ out:
         * just kill slave
         */
         error_report("SVM is going to exit!");
+        colo_proxy_destroy(COLO_SECONDARY_MODE);
         exit(1);
     } else {
         /* if we went here, means master may dead, we are doing failover */
@@ -642,6 +659,5 @@ out:
 
     loadvm_exit_colo();
 
-    colo_proxy_destroy(COLO_SECONDARY_MODE);
     return NULL;
 }
