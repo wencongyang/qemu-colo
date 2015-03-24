@@ -608,6 +608,7 @@ static int net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
     Error *err = NULL;
     TAPState *s;
     int vhostfd;
+    NetClientState *nc = NULL;
 
     s = net_tap_fd_init(peer, model, name, fd, vnet_hdr);
     if (!s) {
@@ -633,6 +634,17 @@ static int net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
             snprintf(s->down_script_arg, sizeof(s->down_script_arg),
                      "%s", ifname);
         }
+    }
+
+    nc = &(s->nc);
+    snprintf(nc->ifname, sizeof(nc->ifname), "%s", ifname);
+    if (tap->has_colo_script) {
+        snprintf(nc->colo_script, sizeof(nc->colo_script), "%s",
+                 tap->colo_script);
+    }
+    if (tap->has_colo_nicname) {
+        snprintf(nc->colo_nicname, sizeof(nc->colo_nicname), "%s",
+                 tap->colo_nicname);
     }
 
     if (tap->has_vhost ? tap->vhost :
@@ -754,9 +766,10 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
 
         if (tap->has_ifname || tap->has_script || tap->has_downscript ||
             tap->has_vnet_hdr || tap->has_helper || tap->has_queues ||
-            tap->has_vhostfd) {
+            tap->has_vhostfd || tap->has_colo_script || tap->has_colo_nicname) {
             error_report("ifname=, script=, downscript=, vnet_hdr=, "
                          "helper=, queues=, and vhostfd= "
+                         "colo_script=, and colo_nicname= "
                          "are invalid with fds=");
             return -1;
         }
@@ -796,9 +809,11 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
         }
     } else if (tap->has_helper) {
         if (tap->has_ifname || tap->has_script || tap->has_downscript ||
-            tap->has_vnet_hdr || tap->has_queues || tap->has_vhostfds) {
+            tap->has_vnet_hdr || tap->has_queues || tap->has_vhostfds ||
+            tap->has_colo_script || tap->has_colo_nicname) {
             error_report("ifname=, script=, downscript=, and vnet_hdr= "
-                         "queues=, and vhostfds= are invalid with helper=");
+                         "queues=, vhostfds=, colo_script=, and "
+                         "colo_nicname= are invalid with helper=");
             return -1;
         }
 
@@ -817,6 +832,12 @@ int net_init_tap(const NetClientOptions *opts, const char *name,
             return -1;
         }
     } else {
+        if (queues > 1 && (tap->has_colo_script || tap->has_colo_nicname)) {
+            error_report("queues > 1 is invalid if colo_script or "
+                         "colo_nicname is specified");
+            return -1;
+        }
+
         if (tap->has_vhostfds) {
             error_report("vhostfds= is invalid if fds= wasn't specified");
             return -1;
