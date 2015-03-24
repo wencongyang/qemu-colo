@@ -15,7 +15,19 @@
 #include "net/net.h"
 #include "net/colo-nic.h"
 #include "qemu/error-report.h"
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
 
+#define NETLINK_COLO 28
+
+enum colo_netlink_op {
+    COLO_QUERY_CHECKPOINT = (NLMSG_MIN_TYPE + 1),
+    COLO_CHECKPOINT,
+    COLO_FAILOVER,
+    COLO_PROXY_INIT,
+    COLO_PROXY_RESET, /* UNUSED, will be used for continuous FT */
+};
 
 typedef struct nic_device {
     NetClientState *nc;
@@ -177,6 +189,12 @@ void colo_remove_nic_devices(NetClientState *nc)
         return;
     }
 
+    /* close netlink socket before cleanup tap device. */
+    if (cp_info.sockfd >= 0) {
+        close(cp_info.sockfd);
+        cp_info.sockfd = -1;
+    }
+
     QTAILQ_FOREACH_SAFE(nic, &nic_devices, next, next_nic) {
         if (nic->nc == nc) {
             configure_one_nic(nc, 0, colo_nic_side, cp_info.index);
@@ -187,20 +205,173 @@ void colo_remove_nic_devices(NetClientState *nc)
     colo_nic_side = -1;
 }
 
+static int colo_proxy_send(uint8_t *buff, uint64_t size, int type)
+{
+    struct sockaddr_nl sa;
+    struct nlmsghdr msg;
+    struct iovec iov;
+    struct msghdr mh;
+    int ret;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+    sa.nl_pid = 0;
+    sa.nl_groups = 0;
+
+    msg.nlmsg_len = NLMSG_SPACE(0);
+    msg.nlmsg_flags = NLM_F_REQUEST;
+    if (type == COLO_PROXY_INIT) {
+        msg.nlmsg_flags |= NLM_F_ACK;
+    }
+    msg.nlmsg_seq = 0;
+    /* This is untrusty */
+    msg.nlmsg_pid = cp_info.index;
+    msg.nlmsg_type = type;
+
+    iov.iov_base = &msg;
+    iov.iov_len = msg.nlmsg_len;
+
+    mh.msg_name = &sa;
+    mh.msg_namelen = sizeof(sa);
+    mh.msg_iov = &iov;
+    mh.msg_iovlen = 1;
+    mh.msg_control = NULL;
+    mh.msg_controllen = 0;
+    mh.msg_flags = 0;
+
+    ret = sendmsg(cp_info.sockfd, &mh, 0);
+    if (ret <= 0) {
+        error_report("can't send msg to kernel by netlink: %s",
+                     strerror(errno));
+    }
+
+    return ret;
+}
+
+/* error: return -1, otherwise return 0 */
+static int64_t colo_proxy_recv(uint8_t **buff, int flags)
+{
+    struct sockaddr_nl sa;
+    struct iovec iov;
+    struct msghdr mh = {
+        .msg_name = &sa,
+        .msg_namelen = sizeof(sa),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+    uint8_t *tmp = g_malloc(16384);
+    uint32_t size = 16384;
+    int64_t len = 0;
+    int ret;
+
+    iov.iov_base = tmp;
+    iov.iov_len = size;
+next:
+   ret = recvmsg(cp_info.sockfd, &mh, flags);
+    if (ret <= 0) {
+        goto out;
+    }
+
+    len += ret;
+    if (mh.msg_flags & MSG_TRUNC) {
+        size += 16384;
+        tmp = g_realloc(tmp, size);
+        iov.iov_base = tmp + len;
+        iov.iov_len = size - len;
+        goto next;
+    }
+
+    *buff = tmp;
+    return len;
+
+out:
+    g_free(tmp);
+    *buff = NULL;
+    return ret;
+}
+
 int colo_proxy_init(int side)
 {
+    int skfd = 0;
+    struct sockaddr_nl sa;
+    struct nlmsghdr *h;
+    struct timeval tv = {0, 500000}; /* timeout for recvmsg from kernel */
+    int i = 1;
     int ret = -1;
+    uint8_t *buff = NULL;
+    int64_t size;
+
+    skfd = socket(PF_NETLINK, SOCK_RAW, NETLINK_COLO);
+    if (skfd < 0) {
+        error_report("can not create a netlink socket: %s", strerror(errno));
+        goto out;
+    }
+    cp_info.sockfd = skfd;
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+    sa.nl_groups = 0;
+retry:
+    sa.nl_pid = i++;
+
+    if (i > 10) {
+        error_report("netlink bind error");
+        goto out;
+    }
+
+    ret = bind(skfd, (struct sockaddr *)&sa, sizeof(sa));
+    if (ret < 0 && errno == EADDRINUSE) {
+        error_report("colo index %d has already in used", sa.nl_pid);
+        goto retry;
+    }
+
+    cp_info.index = sa.nl_pid;
+    ret = colo_proxy_send(NULL, 0, COLO_PROXY_INIT);
+    if (ret < 0) {
+        goto out;
+    }
+    setsockopt(cp_info.sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    ret = -1;
+    size = colo_proxy_recv(&buff, 0);
+    /* disable SO_RCVTIMEO */
+    tv.tv_usec = 0;
+    setsockopt(cp_info.sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    if (size < 0) {
+        error_report("Can't recv msg from kernel by netlink: %s",
+                     strerror(errno));
+        goto out;
+    }
+
+    if (size) {
+        h = (struct nlmsghdr *)buff;
+
+        if (h->nlmsg_type == NLMSG_ERROR) {
+            struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(h);
+            if (size - sizeof(*h) < sizeof(*err)) {
+                goto out;
+            }
+            ret = -err->error;
+            if (ret) {
+                goto out;
+            }
+        }
+    }
 
     ret = configure_nic(side, cp_info.index);
     if (ret != 0) {
         error_report("excute colo-proxy-script failed");
     }
     colo_nic_side = side;
+
+out:
+    g_free(buff);
     return ret;
 }
 
 void colo_proxy_destroy(int side)
 {
+    if (cp_info.sockfd >= 0) {
+        close(cp_info.sockfd);
+    }
     teardown_nic(side, cp_info.index);
     cp_info.index = -1;
     colo_nic_side = -1;
