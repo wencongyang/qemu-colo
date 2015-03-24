@@ -96,6 +96,7 @@ void qemu_start_incoming_migration(const char *uri, Error **errp)
     }
 }
 
+Coroutine *migration_incoming_co;
 static void process_incoming_migration_co(void *opaque)
 {
     QEMUFile *f = opaque;
@@ -103,7 +104,25 @@ static void process_incoming_migration_co(void *opaque)
     int ret;
 
     ret = qemu_loadvm_state(f);
-    qemu_fclose(f);
+
+    /* we get colo info, and know if we are in colo mode */
+    if (loadvm_enable_colo()) {
+        struct colo_incoming *colo_in = g_malloc0(sizeof(*colo_in));
+
+        colo_in->file = f;
+        migration_incoming_co = qemu_coroutine_self();
+        qemu_thread_create(&colo_in->thread, "colo incoming",
+             colo_process_incoming_checkpoints, colo_in, QEMU_THREAD_JOINABLE);
+        qemu_coroutine_yield();
+        migration_incoming_co = NULL;
+#if 0
+        /* FIXME  wait checkpoint incoming thread exit, and free resource */
+        qemu_thread_join(&colo_in->thread);
+        g_free(colo_in);
+#endif
+    } else {
+        qemu_fclose(f);
+    }
     free_xbzrle_decoded_buf();
     if (ret < 0) {
         error_report("load of migration failed: %s", strerror(-ret));

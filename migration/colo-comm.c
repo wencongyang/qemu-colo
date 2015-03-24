@@ -53,3 +53,13 @@ void colo_info_mig_init(void)
     register_savevm_live(NULL, "colo", -1, 1,
                          &savevm_colo_info_handlers, NULL);
 }
+
+bool loadvm_enable_colo(void)
+{
+    return colo_requested;
+}
+
+void loadvm_exit_colo(void)
+{
+    colo_requested = false;
+}
