@@ -60,6 +60,7 @@ enum {
 };
 
 static QEMUBH *colo_bh;
+static bool vmstate_loading;
 static Coroutine *colo;
 /* colo buffer */
 #define COLO_BUFFER_BASE_SIZE (1000*1000*4ULL)
@@ -91,7 +92,10 @@ static bool colo_runstate_is_stopped(void)
  */
 static void slave_do_failover(void)
 {
-    DPRINTF("do_failover!\n");
+    /* Wait for incoming thread loading vmstate */
+    while (vmstate_loading) {
+        ;
+    }
 
     colo = NULL;
 
@@ -125,6 +129,7 @@ static void master_do_failover(void)
 static bool failover_completed;
 void colo_do_failover(MigrationState *s)
 {
+    DPRINTF("do_failover!\n");
     /* Make sure vm stopped while failover */
     if (!colo_runstate_is_stopped()) {
         vm_stop_force_state(RUN_STATE_COLO);
@@ -497,12 +502,15 @@ void *colo_process_incoming_checkpoints(void *opaque)
         }
 
         qemu_mutex_lock_iothread();
+        vmstate_loading = true;
         if (qemu_loadvm_state(fb) < 0) {
             error_report("COLO: loadvm failed");
+            vmstate_loading = false;
             qemu_mutex_unlock_iothread();
             goto out;
         }
         DPRINTF("Finish load all vm state to cache\n");
+        vmstate_loading = false;
         qemu_mutex_unlock_iothread();
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_LOADED);
