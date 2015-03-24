@@ -1184,6 +1184,13 @@ void hmp_migrate_set_capability(Monitor *mon, const QDict *qdict)
     }
 }
 
+void hmp_colo_lost_heartbeat(Monitor *mon, const QDict *qdict)
+{
+    Error *err = NULL;
+    qmp_colo_lost_heartbeat(&err);
+    hmp_handle_error(mon, &err);
+}
+
 void hmp_set_password(Monitor *mon, const QDict *qdict)
 {
     const char *protocol  = qdict_get_str(qdict, "protocol");

@@ -13,6 +13,7 @@
 #include "sysemu/sysemu.h"
 #include "migration/migration-colo.h"
 #include "qemu/error-report.h"
+#include "migration/migration-failover.h"
 
 #define DEBUG_COLO 0
 

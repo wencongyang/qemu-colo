@@ -567,6 +567,15 @@
 { 'command': 'query-migrate-capabilities', 'returns':   ['MigrationCapabilityStatus']}
 
 ##
+# @colo-lost-heartbeat
+#
+# Tell COLO that heartbeat is lost
+#
+# Since: 2.4
+##
+{ 'command': 'colo-lost-heartbeat' }
+
+##
 # @MouseInfo:
 #
 # Information about a mouse device.
