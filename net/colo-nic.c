@@ -37,6 +37,9 @@ typedef struct nic_device {
     bool is_up;
 } nic_device;
 
+typedef struct colo_msg {
+    bool is_checkpoint;
+} colo_msg;
 
 typedef struct colo_proxy {
     int sockfd;
@@ -375,4 +378,42 @@ void colo_proxy_destroy(int side)
     teardown_nic(side, cp_info.index);
     cp_info.index = -1;
     colo_nic_side = -1;
+}
+/*
+do checkpoint: return 1
+error: return -1
+do not checkpoint: return 0
+*/
+int colo_proxy_compare(void)
+{
+    uint8_t *buff;
+    int64_t size;
+    struct nlmsghdr *h;
+    struct colo_msg *m;
+    int ret = -1;
+
+    size = colo_proxy_recv(&buff, MSG_DONTWAIT);
+
+    /* timeout, return no checkpoint message. */
+    if (size <= 0) {
+        return 0;
+    }
+
+    h = (struct nlmsghdr *) buff;
+
+    if (h->nlmsg_type == NLMSG_ERROR) {
+        goto out;
+    }
+
+    if (h->nlmsg_len < NLMSG_LENGTH(sizeof(*m))) {
+        goto out;
+    }
+
+    m = NLMSG_DATA(h);
+
+    ret = m->is_checkpoint ? 1 : 0;
+
+out:
+    g_free(buff);
+    return ret;
 }
