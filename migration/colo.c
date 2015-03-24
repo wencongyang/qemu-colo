@@ -16,6 +16,7 @@
 #include "qemu/error-report.h"
 #include "migration/migration-failover.h"
 #include "net/colo-nic.h"
+#include "qmp-commands.h"
 
 #define DEBUG_COLO 0
 
@@ -78,6 +79,9 @@ enum {
 static QEMUBH *colo_bh;
 static bool vmstate_loading;
 static Coroutine *colo;
+
+int64_t colo_checkpoint_period = CHECKPOINT_MAX_PEROID;
+
 /* colo buffer */
 #define COLO_BUFFER_BASE_SIZE (1000*1000*4ULL)
 QEMUSizedBuffer *colo_buffer;
@@ -91,6 +95,11 @@ bool migrate_in_colo_state(void)
 {
     MigrationState *s = migrate_get_current();
     return (s->state == MIGRATION_STATUS_COLO);
+}
+
+void qmp_colo_set_checkpoint_period(int64_t value, Error **errp)
+{
+    colo_checkpoint_period = value;
 }
 
 static bool colo_runstate_is_stopped(void)
@@ -366,7 +375,7 @@ static void *colo_thread(void *opaque)
          * and then check if we need checkpoint again.
          */
         current_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
-        if (current_time - checkpoint_time < CHECKPOINT_MAX_PEROID) {
+        if (current_time - checkpoint_time < colo_checkpoint_period) {
             g_usleep(100000);
             continue;
         }
