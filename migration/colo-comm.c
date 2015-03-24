@@ -31,6 +31,16 @@ static void colo_info_save(QEMUFile *f, void *opaque)
 }
 
 /* restore */
+int get_colo_mode(void)
+{
+    if (migrate_in_colo_state()) {
+        return COLO_PRIMARY_MODE;
+    } else if (loadvm_in_colo_state()) {
+        return COLO_SECONDARY_MODE;
+    } else {
+        return COLO_UNPROTECTED_MODE;
+    }
+}
 static int colo_info_load(QEMUFile *f, void *opaque, int version_id)
 {
     int value = qemu_get_byte(f);

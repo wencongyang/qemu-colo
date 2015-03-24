@@ -76,6 +76,68 @@ bool migrate_in_colo_state(void)
     return (s->state == MIGRATION_STATUS_COLO);
 }
 
+static bool colo_runstate_is_stopped(void)
+{
+    return runstate_check(RUN_STATE_COLO) || !runstate_is_running();
+}
+
+/*
+ * there are two way to entry this function
+ * 1. From colo checkpoint incoming thread, in this case
+ * we should protect it by iothread lock
+ * 2. From user command, because hmp/qmp command
+ * was happened in main loop, iothread lock will cause a
+ * dead lock.
+ */
+static void slave_do_failover(void)
+{
+    DPRINTF("do_failover!\n");
+
+    colo = NULL;
+
+    if (!autostart) {
+        error_report("\"-S\" qemu option will be ignored in colo slave side");
+        /* recover runstate to normal migration finish state */
+        autostart = true;
+    }
+
+    /* On slave side, jump to incoming co */
+    if (migration_incoming_co) {
+        qemu_coroutine_enter(migration_incoming_co, NULL);
+    }
+}
+
+static void master_do_failover(void)
+{
+    MigrationState *s = migrate_get_current();
+
+    if (!colo_runstate_is_stopped()) {
+        vm_stop_force_state(RUN_STATE_COLO);
+    }
+
+    if (s->state != MIGRATION_STATUS_FAILED) {
+        migrate_set_state(s, MIGRATION_STATUS_COLO, MIGRATION_STATUS_COMPLETED);
+    }
+
+    vm_start();
+}
+
+static bool failover_completed;
+void colo_do_failover(MigrationState *s)
+{
+    /* Make sure vm stopped while failover */
+    if (!colo_runstate_is_stopped()) {
+        vm_stop_force_state(RUN_STATE_COLO);
+    }
+
+    if (get_colo_mode() == COLO_SECONDARY_MODE) {
+        slave_do_failover();
+    } else {
+        master_do_failover();
+    }
+    failover_completed = true;
+}
+
 /* colo checkpoint control helper */
 static int colo_ctl_put(QEMUFile *f, uint64_t request)
 {
@@ -147,11 +209,23 @@ static int colo_do_checkpoint_transaction(MigrationState *s, QEMUFile *control)
         goto out;
     }
 
+    if (failover_request_is_set()) {
+        ret = -1;
+        goto out;
+    }
     /* suspend and save vm state to colo buffer */
     qemu_mutex_lock_iothread();
     vm_stop_force_state(RUN_STATE_COLO);
     qemu_mutex_unlock_iothread();
     DPRINTF("vm is stoped\n");
+    /*
+     * failover request bh could be called after
+     * vm_stop_force_state so we check failover_request_is_set() again.
+     */
+    if (failover_request_is_set()) {
+        ret = -1;
+        goto out;
+    }
 
     /* Disable block migration */
     s->params.blk = 0;
@@ -247,7 +321,18 @@ static void *colo_thread(void *opaque)
     }
 
 out:
-    migrate_set_state(s, MIGRATION_STATUS_COLO, MIGRATION_STATUS_COMPLETED);
+    error_report("colo: some error happens in colo_thread");
+    qemu_mutex_lock_iothread();
+    if (!failover_request_is_set()) {
+        error_report("master takeover from checkpoint channel");
+        failover_request_set();
+    }
+    qemu_mutex_unlock_iothread();
+
+    while (!failover_completed) {
+        ;
+    }
+    failover_request_clear();
 
     qsb_free(colo_buffer);
     colo_buffer = NULL;
@@ -286,6 +371,11 @@ void colo_init_checkpointer(MigrationState *s)
 {
     colo_bh = qemu_bh_new(colo_start_checkpointer, s);
     qemu_bh_schedule(colo_bh);
+}
+
+bool loadvm_in_colo_state(void)
+{
+    return colo != NULL;
 }
 
 /*
@@ -359,6 +449,10 @@ void *colo_process_incoming_checkpoints(void *opaque)
                 continue;
             }
         }
+        if (failover_request_is_set()) {
+            error_report("failover request from heartbeat channel");
+            goto out;
+        }
 
         /* suspend guest */
         qemu_mutex_lock_iothread();
@@ -427,6 +521,32 @@ void *colo_process_incoming_checkpoints(void *opaque)
     }
 
 out:
+    error_report("Detect some error or get a failover request");
+    /* determine whether we need to failover */
+    if (!failover_request_is_set()) {
+        /*
+        * TODO: Here, maybe we should raise a qmp event to the user,
+        * It can help user to know what happens, and help deciding whether to
+        * do failover.
+        */
+        usleep(2000 * 1000);
+    }
+    /* check flag again*/
+    if (!failover_request_is_set()) {
+        /*
+        * We assume that master is still alive according to heartbeat,
+        * just kill slave
+        */
+        error_report("SVM is going to exit!");
+        exit(1);
+    } else {
+        /* if we went here, means master may dead, we are doing failover */
+        while (!failover_completed) {
+            ;
+        }
+        failover_request_clear();
+    }
+
     colo = NULL;
 
     if (fb) {

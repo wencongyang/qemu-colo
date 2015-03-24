@@ -22,6 +22,13 @@
 bool colo_supported(void);
 void colo_info_mig_init(void);
 
+/* Checkpoint control, called in migration/checkpoint thread */
+enum {
+    COLO_UNPROTECTED_MODE = 0,
+    COLO_PRIMARY_MODE,
+    COLO_SECONDARY_MODE,
+};
+
 struct colo_incoming {
     QEMUFile *file;
     QemuThread thread;
@@ -36,8 +43,15 @@ bool loadvm_enable_colo(void);
 void loadvm_exit_colo(void);
 void *colo_process_incoming_checkpoints(void *opaque);
 bool loadvm_in_colo_state(void);
+
+int get_colo_mode(void);
+
 /* ram cache */
 void create_and_init_ram_cache(void);
 void colo_flush_ram_cache(void);
 void release_ram_cache(void);
+
+/* failover */
+void colo_do_failover(MigrationState *s);
+
 #endif
