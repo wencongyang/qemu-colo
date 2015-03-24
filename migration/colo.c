@@ -409,7 +409,6 @@ void *colo_process_incoming_checkpoints(void *opaque)
         }
         DPRINTF("Finish load all vm state to cache\n");
         qemu_mutex_unlock_iothread();
-        /* TODO: flush vm state */
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_LOADED);
         if (ret < 0) {
