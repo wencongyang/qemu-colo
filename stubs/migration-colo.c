@@ -16,3 +16,12 @@ bool colo_supported(void)
 {
     return false;
 }
+
+bool migrate_in_colo_state(void)
+{
+    return false;
+}
+
+void colo_init_checkpointer(MigrationState *s)
+{
+}
