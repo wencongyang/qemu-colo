@@ -316,8 +316,10 @@ void *colo_process_incoming_checkpoints(void *opaque)
     struct colo_incoming *colo_in = opaque;
     QEMUFile *f = colo_in->file;
     int fd = qemu_get_fd(f);
-    QEMUFile *ctl = NULL;
+    QEMUFile *ctl = NULL, *fb = NULL;
     int ret;
+    uint64_t total_size;
+
     colo = qemu_coroutine_self();
     assert(colo != NULL);
 
@@ -329,10 +331,17 @@ void *colo_process_incoming_checkpoints(void *opaque)
 
     create_and_init_ram_cache();
 
+    colo_buffer = qsb_create(NULL, COLO_BUFFER_BASE_SIZE);
+    if (colo_buffer == NULL) {
+        error_report("Failed to allocate colo buffer!");
+        goto out;
+    }
+
     ret = colo_ctl_put(ctl, COLO_READY);
     if (ret < 0) {
         goto out;
     }
+
     qemu_mutex_lock_iothread();
     /* in COLO mode, slave is runing, so start the vm */
     vm_start();
@@ -367,14 +376,39 @@ void *colo_process_incoming_checkpoints(void *opaque)
         }
         DPRINTF("Got COLO_CHECKPOINT_SEND\n");
 
-        /*TODO Load VM state */
+        /* read the VM state total size first */
+        ret = colo_ctl_get_value(f, &total_size);
+        if (ret < 0) {
+            goto out;
+        }
+        DPRINTF("vmstate total size = %ld\n", total_size);
+        /* read vm device state into colo buffer */
+        ret = qsb_fill_buffer(colo_buffer, f, total_size);
+        if (ret != total_size) {
+            error_report("can't get all migration data");
+            goto out;
+        }
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_RECEIVED);
         if (ret < 0) {
             goto out;
         }
         DPRINTF("Recived vm state\n");
+        /* open colo buffer for read */
+        fb = qemu_bufopen("r", colo_buffer);
+        if (!fb) {
+            error_report("can't open colo buffer for read");
+            goto out;
+        }
 
+        qemu_mutex_lock_iothread();
+        if (qemu_loadvm_state(fb) < 0) {
+            error_report("COLO: loadvm failed");
+            qemu_mutex_unlock_iothread();
+            goto out;
+        }
+        DPRINTF("Finish load all vm state to cache\n");
+        qemu_mutex_unlock_iothread();
         /* TODO: flush vm state */
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_LOADED);
@@ -387,14 +421,25 @@ void *colo_process_incoming_checkpoints(void *opaque)
         vm_start();
         qemu_mutex_unlock_iothread();
         DPRINTF("OK, vm runs again\n");
-}
+
+        qemu_fclose(fb);
+        fb = NULL;
+    }
 
 out:
     colo = NULL;
+
+    if (fb) {
+        qemu_fclose(fb);
+    }
+
     release_ram_cache();
     if (ctl) {
         qemu_fclose(ctl);
     }
+
+    qsb_free(colo_buffer);
+
     loadvm_exit_colo();
 
     return NULL;
