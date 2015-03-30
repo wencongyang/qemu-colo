@@ -364,6 +364,7 @@ struct BlockDriverState {
     QDict *full_open_options;
     char exact_filename[PATH_MAX];
 
+    bool backing_reference;
     BlockDriverState *backing_hd;
     BlockDriverState *file;
 
