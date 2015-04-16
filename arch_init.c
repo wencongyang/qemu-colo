@@ -1011,7 +1011,7 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
     while (true) {
         int pages;
 
-        pages = ram_find_and_save_block(f, true, &bytes_transferred);
+        pages = ram_find_and_save_block(f, !migrate_in_colo_state(), &bytes_transferred);
         /* no more blocks to sent */
         if (pages == 0) {
             break;
