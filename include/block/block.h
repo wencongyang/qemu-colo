@@ -606,4 +606,7 @@ void bdrv_flush_io_queue(BlockDriverState *bs);
 
 BlockAcctStats *bdrv_get_stats(BlockDriverState *bs);
 
+void bdrv_connect(BlockDriverState *bs, Error **errp);
+void bdrv_disconnect(BlockDriverState *bs);
+
 #endif

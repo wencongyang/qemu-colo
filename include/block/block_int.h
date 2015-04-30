@@ -290,6 +290,9 @@ struct BlockDriver {
      */
     int (*bdrv_probe_geometry)(BlockDriverState *bs, HDGeometry *geo);
 
+    void (*bdrv_connect)(BlockDriverState *bs, Error **errp);
+    void (*bdrv_disconnect)(BlockDriverState *bs);
+
     QLIST_ENTRY(BlockDriver) list;
 };
 

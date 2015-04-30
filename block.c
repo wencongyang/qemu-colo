@@ -4400,3 +4400,27 @@ BlockAcctStats *bdrv_get_stats(BlockDriverState *bs)
 {
     return &bs->stats;
 }
+
+void bdrv_connect(BlockDriverState *bs, Error **errp)
+{
+    BlockDriver *drv = bs->drv;
+
+    if (drv && drv->bdrv_connect) {
+        drv->bdrv_connect(bs, errp);
+    } else if (bs->file) {
+        bdrv_connect(bs->file, errp);
+    } else {
+        error_setg(errp, "this feature or command is not currently supported");
+    }
+}
+
+void bdrv_disconnect(BlockDriverState *bs)
+{
+    BlockDriver *drv = bs->drv;
+
+    if (drv && drv->bdrv_disconnect) {
+        drv->bdrv_disconnect(bs);
+    } else if (bs->file) {
+        bdrv_disconnect(bs->file);
+    }
+}
