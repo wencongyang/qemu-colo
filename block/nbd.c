@@ -298,10 +298,12 @@ static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
         return -EINVAL;
     }
 
-    nbd_connect_server(bs, &local_err);
-    if (local_err) {
-        error_propagate(errp, local_err);
-        return -EINVAL;
+    if (!(flags & BDRV_O_NO_CONNECT)) {
+        nbd_connect_server(bs, &local_err);
+        if (local_err) {
+            error_propagate(errp, local_err);
+            return -EINVAL;
+        }
     }
 
     return 0;
