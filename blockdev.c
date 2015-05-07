@@ -429,6 +429,10 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
         qdict_put(bs_opts, "driver", qstring_from_str(buf));
     }
 
+    if (qemu_opt_get_bool(opts, "no-connect", false)) {
+        bdrv_flags |= BDRV_O_NO_CONNECT;
+    }
+
     /* disk I/O throttling */
     memset(&cfg, 0, sizeof(cfg));
     cfg.buckets[THROTTLE_BPS_TOTAL].avg =
@@ -3197,6 +3201,10 @@ QemuOptsList qemu_common_drive_opts = {
             .name = "detect-zeroes",
             .type = QEMU_OPT_STRING,
             .help = "try to optimize zero writes (off, on, unmap)",
+        },{
+            .name = "no-connect",
+            .type = QEMU_OPT_BOOL,
+            .help = "enable whether to connect remote target"
         },
         { /* end of list */ }
     },
