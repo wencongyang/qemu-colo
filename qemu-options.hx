@@ -469,6 +469,7 @@ DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "       [[,iops_max=im]|[[,iops_rd_max=irm][,iops_wr_max=iwm]]]\n"
     "       [[,iops_size=is]]\n"
     "       [[,group=g]]\n"
+    "       [,no-connect=on|off]\n"
     "                use 'file' as a drive image\n", QEMU_ARCH_ALL)
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
@@ -530,6 +531,9 @@ file sectors into the image file.
 conversion of plain zero writes by the OS to driver specific optimized
 zero write commands. You may even choose "unmap" if @var{discard} is set
 to "unmap" to allow a zero write to be converted to an UNMAP operation.
+@item no-connect=@var{no-connect}
+@var{no-connect} is "on" or "off", and enables whether to connect to remote
+target when open the drive. The default value is "off".
 @end table
 
 By default, the @option{cache=writeback} mode is used. It will report data
