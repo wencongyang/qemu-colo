@@ -315,6 +315,7 @@ static int colo_do_checkpoint_transaction(MigrationState *s, QEMUFile *control)
         qemu_fflush(s->file);
         colo_shutdown_requested = 0;
         qemu_system_shutdown_request_core();
+        while (1);
     }
 
     ret = 0;
@@ -498,6 +499,7 @@ static int colo_wait_handle_cmd(QEMUFile *f, int *checkpoint_request)
         return 0;
     case COLO_GUEST_SHUTDOWN:
         qemu_mutex_lock_iothread();
+        vm_stop_force_state(RUN_STATE_COLO);
         qemu_system_shutdown_request_core();
         qemu_mutex_unlock_iothread();
         /* the main thread will exit and termiante the whole
