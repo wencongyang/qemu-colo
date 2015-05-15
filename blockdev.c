@@ -2619,8 +2619,6 @@ out:
     aio_context_release(aio_context);
 }
 
-#define DEFAULT_MIRROR_BUF_SIZE   (10 << 20)
-
 void qmp_drive_mirror(const char *device, const char *target,
                       bool has_format, const char *format,
                       bool has_node_name, const char *node_name,
@@ -2661,7 +2659,7 @@ void qmp_drive_mirror(const char *device, const char *target,
         granularity = 0;
     }
     if (!has_buf_size) {
-        buf_size = DEFAULT_MIRROR_BUF_SIZE;
+        buf_size = 0;
     }
 
     if (granularity != 0 && (granularity < 512 || granularity > 1048576 * 64)) {
