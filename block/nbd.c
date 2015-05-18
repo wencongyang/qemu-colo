@@ -44,6 +44,8 @@
 typedef struct BDRVNBDState {
     NbdClientSession client;
     QemuOpts *socket_opts;
+    char *export;
+    bool connected;
 } BDRVNBDState;
 
 static int nbd_parse_uri(const char *filename, QDict *options)
@@ -254,34 +256,56 @@ static int nbd_establish_connection(BlockDriverState *bs, Error **errp)
     return sock;
 }
 
-static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
-                    Error **errp)
+static void nbd_connect_server(BlockDriverState *bs, Error **errp)
 {
     BDRVNBDState *s = bs->opaque;
-    char *export = NULL;
-    int result, sock;
-    Error *local_err = NULL;
-
-    /* Pop the config into our state object. Exit if invalid. */
-    nbd_config(s, options, &export, &local_err);
-    if (local_err) {
-        error_propagate(errp, local_err);
-        return -EINVAL;
-    }
+    int sock;
 
     /* establish TCP connection, return error if it fails
      * TODO: Configurable retry-until-timeout behaviour.
      */
     sock = nbd_establish_connection(bs, errp);
     if (sock < 0) {
-        g_free(export);
-        return sock;
+        return;
     }
 
     /* NBD handshake */
-    result = nbd_client_init(bs, sock, export, errp);
-    g_free(export);
-    return result;
+    nbd_client_init(bs, sock, s->export, errp);
+
+    s->connected = true;
+}
+
+static void nbd_disconnect_server(BlockDriverState *bs)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    if (s->connected) {
+        nbd_client_close(bs);
+        s->connected = false;
+    }
+}
+
+static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
+                    Error **errp)
+{
+    BDRVNBDState *s = bs->opaque;
+    Error *local_err = NULL;
+
+    /* Pop the config into our state object. Exit if invalid. */
+    nbd_config(s, options, &s->export, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return -EINVAL;
+    }
+
+    nbd_connect_server(bs, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        g_free(s->export);
+        return -EINVAL;
+    }
+
+    return 0;
 }
 
 static int nbd_co_readv(BlockDriverState *bs, int64_t sector_num,
@@ -318,7 +342,8 @@ static void nbd_close(BlockDriverState *bs)
     BDRVNBDState *s = bs->opaque;
 
     qemu_opts_del(s->socket_opts);
-    nbd_client_close(bs);
+    nbd_disconnect_server(bs);
+    g_free(s->export);
 }
 
 static int64_t nbd_getlength(BlockDriverState *bs)
@@ -400,6 +425,8 @@ static BlockDriver bdrv_nbd = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_connect               = nbd_connect_server,
+    .bdrv_disconnect            = nbd_disconnect_server,
 };
 
 static BlockDriver bdrv_nbd_tcp = {
@@ -418,6 +445,8 @@ static BlockDriver bdrv_nbd_tcp = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_connect               = nbd_connect_server,
+    .bdrv_disconnect            = nbd_disconnect_server,
 };
 
 static BlockDriver bdrv_nbd_unix = {
@@ -436,6 +465,8 @@ static BlockDriver bdrv_nbd_unix = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_connect               = nbd_connect_server,
+    .bdrv_disconnect            = nbd_disconnect_server,
 };
 
 static void bdrv_nbd_init(void)
