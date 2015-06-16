@@ -745,6 +745,15 @@ static const BdrvChildRole child_backing = {
     .inherit_flags = bdrv_backing_flags,
 };
 
+static int bdrv_backing_rw_flags(int flags)
+{
+    return bdrv_backing_flags(flags) | BDRV_O_RDWR;
+}
+
+static const BdrvChildRole child_backing_rw = {
+    .inherit_flags = bdrv_backing_rw_flags,
+};
+
 static int bdrv_open_flags(BlockDriverState *bs, int flags)
 {
     int open_flags = flags | BDRV_O_CACHE_WB;
@@ -1131,6 +1140,20 @@ out:
     bdrv_refresh_limits(bs, NULL);
 }
 
+#define ALLOW_WRITE_BACKING_FILE    "allow-write-backing-file"
+static QemuOptsList backing_file_opts = {
+    .name = "backing_file",
+    .head = QTAILQ_HEAD_INITIALIZER(backing_file_opts.head),
+    .desc = {
+        {
+            .name = ALLOW_WRITE_BACKING_FILE,
+            .type = QEMU_OPT_BOOL,
+            .help = "allow write to backing file",
+        },
+        { /* end of list */ }
+    },
+};
+
 /*
  * Opens the backing file for a BlockDriverState if not yet open
  *
@@ -1145,6 +1168,8 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     int ret = 0;
     BlockDriverState *backing_hd;
     Error *local_err = NULL;
+    QemuOpts *opts = NULL;
+    bool child_rw = false;
 
     if (bs->backing_hd != NULL) {
         QDECREF(options);
@@ -1157,6 +1182,18 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     }
 
     bs->open_flags &= ~BDRV_O_NO_BACKING;
+
+    opts = qemu_opts_create(&backing_file_opts, NULL, 0, &error_abort);
+    qemu_opts_absorb_qdict(opts, options, &local_err);
+    if (local_err) {
+        ret = -EINVAL;
+        error_propagate(errp, local_err);
+        QDECREF(options);
+        goto free_exit;
+    }
+    child_rw = qemu_opt_get_bool(opts, ALLOW_WRITE_BACKING_FILE, false);
+    qemu_opts_del(opts);
+
     if (qdict_haskey(options, "file.filename")) {
         backing_filename[0] = '\0';
     } else if (bs->backing_file[0] == '\0' && qdict_size(options) == 0) {
@@ -1189,7 +1226,8 @@ int bdrv_open_backing_file(BlockDriverState *bs, QDict *options, Error **errp)
     assert(bs->backing_hd == NULL);
     ret = bdrv_open_inherit(&backing_hd,
                             *backing_filename ? backing_filename : NULL,
-                            NULL, options, 0, bs, &child_backing,
+                            NULL, options, 0, bs,
+                            child_rw ? &child_backing_rw : &child_backing,
                             NULL, &local_err);
     if (ret < 0) {
         bdrv_unref(backing_hd);
