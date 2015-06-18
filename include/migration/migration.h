@@ -81,6 +81,8 @@ struct MigrationState
     int64_t dirty_sync_count;
 };
 
+void migrate_set_state(MigrationState *s, int old_state, int new_state);
+
 void process_incoming_migration(QEMUFile *f);
 
 void qemu_start_incoming_migration(const char *uri, Error **errp);
