@@ -20,4 +20,7 @@ typedef struct COLONicState {
     char ifname[128];  /* e.g. tap name */
 } COLONicState;
 
+void colo_add_nic_devices(COLONicState *cns);
+void colo_remove_nic_devices(COLONicState *cns);
+
 #endif
