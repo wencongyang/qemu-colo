@@ -14,6 +14,7 @@
 #include "migration/migration-colo.h"
 #include "trace.h"
 #include "qemu/error-report.h"
+#include "migration/migration-failover.h"
 
 enum {
     COLO_CHECPOINT_READY = 0x46,

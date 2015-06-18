@@ -17,6 +17,7 @@
 #include "migration/migration.h"
 #include "block/coroutine.h"
 #include "qemu/thread.h"
+#include "qemu/main-loop.h"
 
 bool colo_supported(void);
 void colo_info_mig_init(void);
@@ -35,6 +36,9 @@ bool loadvm_enable_colo(void);
 void loadvm_exit_colo(void);
 void *colo_process_incoming_checkpoints(void *opaque);
 bool loadvm_in_colo_state(void);
+
+int get_colo_mode(void);
+
 /* ram cache */
 int create_and_init_ram_cache(void);
 void colo_flush_ram_cache(void);
