@@ -2293,6 +2293,10 @@
 #
 # @queues: #optional number of queues to be created for multiqueue capable tap
 #
+# @colo_nicname: #optional the host physical nic for QEMU (Since 2.3)
+#
+# @colo_script: #optional the script file which used by COLO (Since 2.3)
+#
 # Since 1.2
 ##
 { 'struct': 'NetdevTapOptions',
@@ -2309,7 +2313,9 @@
     '*vhostfd':    'str',
     '*vhostfds':   'str',
     '*vhostforce': 'bool',
-    '*queues':     'uint32'} }
+    '*queues':     'uint32',
+    '*colo_nicname':  'str',
+    '*colo_script':   'str'} }
 
 ##
 # @NetdevSocketOptions
