@@ -15,7 +15,7 @@
 #include "net/net.h"
 #include "net/colo-nic.h"
 #include "qemu/error-report.h"
-
+#include "net/tap.h"
 
 typedef struct nic_device {
     COLONicState *cns;
@@ -28,10 +28,45 @@ typedef struct nic_device {
 
 QTAILQ_HEAD(, nic_device) nic_devices = QTAILQ_HEAD_INITIALIZER(nic_devices);
 
-/*
-* colo_proxy_script usage
-* ./colo_proxy_script master/slave install/uninstall phy_if virt_if index
-*/
+static int colo_nic_configure(COLONicState *cns,
+            bool up, int side, int index)
+{
+    int i, argc = 6;
+    char *argv[7], index_str[32];
+    char **parg;
+    NetClientState *nc = container_of(cns, NetClientState, cns);
+    TAPState *s = DO_UPCAST(TAPState, nc, nc);
+    Error *err = NULL;
+
+    if (!cns && index <= 0) {
+        error_report("Can not parse colo_script or colo_nicname");
+        return -1;
+    }
+
+    parg = argv;
+    *parg++ = cns->script;
+    *parg++ = (char *)(side == COLO_MODE_SECONDARY ? "secondary" : "primary");
+    *parg++ = (char *)(up ? "install" : "uninstall");
+    *parg++ = cns->nicname;
+    *parg++ = cns->ifname;
+    sprintf(index_str, "%d", index);
+    *parg++ = index_str;
+    *parg = NULL;
+
+    for (i = 0; i < argc; i++) {
+        if (!argv[i][0]) {
+            error_report("Can not get colo_script argument");
+            return -1;
+        }
+    }
+
+    launch_script(argv, s->fd, &err);
+    if (err) {
+        error_report_err(err);
+        return -1;
+    }
+    return 0;
+}
 
 void colo_add_nic_devices(COLONicState *cns)
 {
@@ -51,7 +86,7 @@ void colo_add_nic_devices(COLONicState *cns)
     }
 
     nic = g_malloc0(sizeof(*nic));
-    nic->configure = NULL;
+    nic->configure = colo_nic_configure;
     nic->cns = cns;
 
     QTAILQ_INSERT_TAIL(&nic_devices, nic, next);
