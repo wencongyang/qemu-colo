@@ -473,6 +473,22 @@ Example:
 { "timestamp": {"seconds": 1290688046, "microseconds": 417172},
   "event": "SPICE_MIGRATE_COMPLETED" }
 
+COLO_EXIT
+---------
+
+Emitted when VM finish COLO mode due to some errors happening or
+the request of users.
+
+Data: None.
+
+ - "mode": COLO mode, 'primary' or 'secondary'
+ - "error": Error message (json-string, optional)
+
+Example:
+
+{"timestamp": {"seconds": 2032141960, "microseconds": 417172},
+ "event": "COLO_EXIT", "data": {"mode": "primary"}}
+
 
 STOP
 ----

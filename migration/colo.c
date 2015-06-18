@@ -15,6 +15,7 @@
 #include "trace.h"
 #include "qemu/error-report.h"
 #include "migration/migration-failover.h"
+#include "qapi-event.h"
 
 enum {
     COLO_CHECPOINT_READY = 0x46,
@@ -325,13 +326,14 @@ static void *colo_thread(void *opaque)
 
 out:
     error_report("colo: some error happens in colo_thread");
+    qapi_event_send_colo_exit("primary", true, "unknown", NULL);;
     /* Give users time (2s) to get involved in this verdict */
     for (i = 0; i < 10; i++) {
         if (failover_request_is_set()) {
             error_report("Primary VM will take over work");
             break;
         }
-        usleep(200*1000);
+        usleep(200 * 1000);
     }
     qemu_mutex_lock_iothread();
     if (!failover_request_is_set()) {
@@ -533,13 +535,19 @@ void *colo_process_incoming_checkpoints(void *opaque)
 
 out:
     error_report("Detect some error or get a failover request");
+    /*
+    * Here, we raise a qmp event to the user,
+    * It can help user to know what happens, and help deciding whether to
+    * do failover.
+    */
+    qapi_event_send_colo_exit("secondary", true, "unknown", NULL);;
     /* Give users time (2s) to get involved in this verdict */
     for (i = 0; i < 10; i++) {
         if (failover_request_is_set()) {
             error_report("Secondary VM will take over work");
             break;
         }
-        usleep(200*1000);
+        usleep(200 * 1000);
     }
     /* check flag again*/
     if (!failover_request_is_set()) {
