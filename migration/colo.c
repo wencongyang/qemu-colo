@@ -10,6 +10,7 @@
  * later.  See the COPYING file in the top-level directory.
  */
 
+#include "qemu/timer.h"
 #include "sysemu/sysemu.h"
 #include "migration/migration-colo.h"
 #include "trace.h"
@@ -24,6 +25,13 @@
 * CHECKPOINT_MIN_PERIOD is the min time limit between two checkpoint action.
 */
 #define CHECKPOINT_MIN_PERIOD 100  /* unit: ms */
+
+/*
+ * force checkpoint timer: unit ms
+ * this is large because COLO checkpoint will mostly depend on
+ * COLO compare module.
+ */
+#define CHECKPOINT_MAX_PEROID 10000
 
 enum {
     COLO_CHECPOINT_READY = 0x46,
@@ -343,14 +351,7 @@ static void *colo_thread(void *opaque)
         proxy_checkpoint_req = colo_proxy_compare();
         if (proxy_checkpoint_req < 0) {
             goto out;
-        } else if (!proxy_checkpoint_req) {
-            /*
-             * No checkpoint is needed, wait for 1ms and then
-             * check if we need checkpoint again
-             */
-            g_usleep(1000);
-            continue;
-        } else {
+        } else if (proxy_checkpoint_req) {
             int64_t interval;
 
             current_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
@@ -359,8 +360,20 @@ static void *colo_thread(void *opaque)
                 /* Limit the min time between two checkpoint */
                 g_usleep((1000*(CHECKPOINT_MIN_PERIOD - interval)));
             }
+            goto do_checkpoint;
         }
 
+        /*
+         * No proxy checkpoint is request, wait for 100ms
+         * and then check if we need checkpoint again.
+         */
+        current_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
+        if (current_time - checkpoint_time < CHECKPOINT_MAX_PEROID) {
+            g_usleep(100000);
+            continue;
+        }
+
+do_checkpoint:
         /* start a colo checkpoint */
         if (colo_do_checkpoint_transaction(s, colo_control)) {
             goto out;
