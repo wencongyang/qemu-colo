@@ -325,11 +325,22 @@ void *colo_process_incoming_checkpoints(void *opaque)
         error_report("Can't open incoming channel!");
         goto out;
     }
+
+    if (create_and_init_ram_cache() < 0) {
+        error_report("Failed to initialize ram cache");
+        goto out;
+    }
+
     ret = colo_ctl_put(ctl, COLO_CHECPOINT_READY);
     if (ret < 0) {
         goto out;
     }
-    /* TODO: in COLO mode, Secondary is runing, so start the vm */
+    qemu_mutex_lock_iothread();
+    /* in COLO mode, slave is runing, so start the vm */
+    vm_start();
+    qemu_mutex_unlock_iothread();
+    trace_colo_vm_state_change("stop", "run");
+
     while (true) {
         int request = 0;
         int ret = colo_wait_handle_cmd(f, &request);
@@ -342,7 +353,12 @@ void *colo_process_incoming_checkpoints(void *opaque)
             }
         }
 
-        /* TODO: suspend guest */
+        /* suspend guest */
+        qemu_mutex_lock_iothread();
+        vm_stop_force_state(RUN_STATE_COLO);
+        qemu_mutex_unlock_iothread();
+        trace_colo_vm_state_change("run", "stop");
+
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_SUSPENDED);
         if (ret < 0) {
             goto out;
@@ -354,7 +370,7 @@ void *colo_process_incoming_checkpoints(void *opaque)
         }
         trace_colo_receive_message("COLO_CHECKPOINT_SEND");
 
-        /* TODO: read migration data into colo buffer */
+        /*TODO Load VM state */
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_RECEIVED);
         if (ret < 0) {
@@ -362,16 +378,23 @@ void *colo_process_incoming_checkpoints(void *opaque)
         }
         trace_colo_receive_message("COLO_CHECKPOINT_RECEIVED");
 
-        /* TODO: load vm state */
+        /* TODO: flush vm state */
 
         ret = colo_ctl_put(ctl, COLO_CHECKPOINT_LOADED);
         if (ret < 0) {
             goto out;
         }
+
+        /* resume guest */
+        qemu_mutex_lock_iothread();
+        vm_start();
+        qemu_mutex_unlock_iothread();
+        trace_colo_vm_state_change("stop", "start");
 }
 
 out:
     colo = NULL;
+    release_ram_cache();
     if (ctl) {
         qemu_fclose(ctl);
     }
