@@ -10,6 +10,7 @@
  * later.  See the COPYING file in the top-level directory.
  */
 
+#include "hw/qdev-core.h"
 #include "qemu/timer.h"
 #include "sysemu/sysemu.h"
 #include "migration/migration-colo.h"
@@ -325,6 +326,7 @@ out:
 static void *colo_thread(void *opaque)
 {
     MigrationState *s = opaque;
+    int dev_hotplug = qdev_hotplug;
     QEMUFile *colo_control = NULL;
     int64_t current_time, checkpoint_time = qemu_clock_get_ms(QEMU_CLOCK_HOST);
     int i, ret;
@@ -339,6 +341,8 @@ static void *colo_thread(void *opaque)
         error_report("Open colo_control failed!");
         goto out;
     }
+
+    qdev_hotplug = 0;
 
     /*
      * Wait for Secondary finish loading vm states and enter COLO
@@ -436,6 +440,8 @@ out:
     qemu_bh_schedule(s->cleanup_bh);
     qemu_mutex_unlock_iothread();
 
+    qdev_hotplug = dev_hotplug;
+
     return NULL;
 }
 
@@ -493,9 +499,12 @@ void *colo_process_incoming_checkpoints(void *opaque)
     struct colo_incoming *colo_in = opaque;
     QEMUFile *f = colo_in->file;
     int fd = qemu_get_fd(f);
+    int dev_hotplug = qdev_hotplug;
     QEMUFile *ctl = NULL, *fb = NULL;
     int i, ret;
     uint64_t total_size;
+
+    qdev_hotplug = 0;
 
     colo = qemu_coroutine_self();
     assert(colo != NULL);
@@ -673,6 +682,8 @@ out:
     qsb_free(colo_buffer);
 
     loadvm_exit_colo();
+
+    qdev_hotplug = dev_hotplug;
 
     return NULL;
 }
