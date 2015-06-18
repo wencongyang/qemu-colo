@@ -16,6 +16,7 @@
 #include "qemu/error-report.h"
 #include "migration/migration-failover.h"
 #include "qapi-event.h"
+#include "net/colo-nic.h"
 
 enum {
     COLO_CHECPOINT_READY = 0x46,
@@ -291,6 +292,11 @@ static void *colo_thread(void *opaque)
     QEMUFile *colo_control = NULL;
     int i, ret;
 
+    if (colo_proxy_init(COLO_MODE_PRIMARY) != 0) {
+        error_report("Init colo proxy error");
+        goto out;
+    }
+
     colo_control = qemu_fopen_socket(qemu_get_fd(s->file), "rb");
     if (!colo_control) {
         error_report("Open colo_control failed!");
@@ -364,6 +370,8 @@ out:
     qemu_bh_schedule(s->cleanup_bh);
     qemu_mutex_unlock_iothread();
 
+    colo_proxy_destroy(COLO_MODE_PRIMARY);
+
     return NULL;
 }
 
@@ -427,6 +435,12 @@ void *colo_process_incoming_checkpoints(void *opaque)
 
     colo = qemu_coroutine_self();
     assert(colo != NULL);
+
+     /* configure the network */
+    if (colo_proxy_init(COLO_MODE_SECONDARY) != 0) {
+        error_report("Init colo proxy error\n");
+        goto out;
+    }
 
     ctl = qemu_fopen_socket(fd, "wb");
     if (!ctl) {
@@ -590,5 +604,6 @@ out:
 
     loadvm_exit_colo();
 
+    colo_proxy_destroy(COLO_MODE_SECONDARY);
     return NULL;
 }

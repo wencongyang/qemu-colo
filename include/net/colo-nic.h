@@ -13,6 +13,7 @@
 
 #ifndef COLO_NIC_H
 #define COLO_NIC_H
+#include "migration/migration-colo.h"
 
 typedef struct COLONicState {
     char nicname[128]; /* forward dev */
@@ -22,5 +23,8 @@ typedef struct COLONicState {
 
 void colo_add_nic_devices(COLONicState *cns);
 void colo_remove_nic_devices(COLONicState *cns);
+
+int colo_proxy_init(enum COLOMode mode);
+void colo_proxy_destroy(enum COLOMode mode);
 
 #endif
