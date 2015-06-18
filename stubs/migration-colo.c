@@ -22,6 +22,16 @@ bool migrate_in_colo_state(void)
     return false;
 }
 
+bool loadvm_in_colo_state(void)
+{
+    return false;
+}
+
 void colo_init_checkpointer(MigrationState *s)
 {
+}
+
+void *colo_process_incoming_checkpoints(void *opaque)
+{
+    return NULL;
 }

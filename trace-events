@@ -1471,6 +1471,7 @@ colo_info_load(const char *msg) "%s"
 
 # migration/colo.c
 colo_vm_state_change(const char *old, const char *new) "Change '%s' => '%s'"
+colo_receive_message(const char *msg) "Receive '%s'"
 
 # kvm-all.c
 kvm_ioctl(int type, void *arg) "type 0x%x, arg %p"
